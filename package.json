@@ -1,7 +1,7 @@
 {
-  "name": "sync-browser-render",
-  "version": "2.0.0",
-  "description": "Synchronized multi-window browser with Puppeteer",
+  "name": "sync-browser-pro",
+  "version": "3.0.0",
+  "description": "Real-time multi-browser with full control",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
