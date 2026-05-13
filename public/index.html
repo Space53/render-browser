@@ -3,156 +3,81 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Real Browser - Render</title>
+    <title>Sync Browser Pro</title>
     <link rel="stylesheet" href="styles.css">
     <script src="/socket.io/socket.io.js"></script>
 </head>
 <body>
     <div id="app">
-        <!-- Верхняя панель управления -->
-        <header class="control-panel">
-            <div class="url-bar">
-                <input 
-                    type="text" 
-                    id="urlInput" 
-                    placeholder="Введите URL адрес..." 
-                    value="https://example.com"
-                >
-                <button id="btnNavigate" class="btn btn-primary">
-                    🚀 Перейти
+        <!-- ========== БОКОВАЯ ПАНЕЛЬ ========== -->
+        <aside class="sidebar" id="sidebar">
+            <div class="sidebar-header">
+                <h2>🖥️ Окна</h2>
+                <button class="btn-icon" onclick="toggleSidebar()">◀</button>
+            </div>
+            
+            <div class="windows-list" id="windowsList">
+                <!-- Динамически заполняется -->
+            </div>
+            
+            <div class="sidebar-footer">
+                <button class="btn btn-primary" onclick="addNewWindow()">
+                    ➕ Добавить окно
                 </button>
-                <button id="btnSync" class="btn btn-secondary">
-                    🔄 Синхронизировать все окна
-                </button>
+            </div>
+        </aside>
+        
+        <!-- ========== ОСНОВНАЯ ОБЛАСТЬ ========== -->
+        <main class="main-content" id="mainContent">
+            <!-- Верхняя панель -->
+            <header class="top-bar">
+                <button class="btn-icon" onclick="toggleSidebar()">☰</button>
+                <span class="top-title" id="currentViewTitle">Все окна</span>
+                <div class="top-actions">
+                    <button class="btn btn-sm" onclick="refreshAll()">🔄 Обновить все</button>
+                    <button class="btn btn-sm btn-success" onclick="startAllAutoScroll()">▶ Анти-кик все</button>
+                    <button class="btn btn-sm btn-danger" onclick="stopAllAutoScroll()">⏹ Стоп все</button>
+                </div>
+            </header>
+            
+            <!-- Сетка окон -->
+            <div class="windows-grid" id="windowsGrid">
+                <!-- Динамически заполняется -->
             </div>
             
-            <div class="tools-bar">
-                <!-- Анти-кик -->
-                <div class="tool-group">
-                    <span class="tool-label">🛡️ Анти-кик:</span>
-                    <button id="btnStartScroll" class="btn btn-success">
-                        ▶ Запустить
-                    </button>
-                    <button id="btnStopScroll" class="btn btn-danger" disabled>
-                        ⏹ Остановить
-                    </button>
-                </div>
-                
-                <div class="separator"></div>
-                
-                <!-- Кликеры -->
-                <div class="tool-group">
-                    <span class="tool-label">🤖 Кликеры:</span>
-                    <button id="btnAddClicker" class="btn btn-purple">
-                        🖱️ Кликер
-                    </button>
-                    <button id="btnAddScroller" class="btn btn-indigo">
-                        👆 Скроллер
-                    </button>
-                    <button id="btnAddRefresher" class="btn btn-orange">
-                        🔄 Обновитель
-                    </button>
-                    <button id="btnAddHover" class="btn btn-teal">
-                        👆 Ховер
-                    </button>
-                    <button id="btnAddTyper" class="btn btn-pink">
-                        ⌨️ Ввод текста
-                    </button>
-                </div>
-                
-                <div class="separator"></div>
-                
-                <!-- Активные кликеры -->
-                <div class="tool-group" id="activeClickers">
-                    <span class="tool-label">Активные:</span>
-                </div>
-            </div>
-        </header>
-
-        <!-- Основная область с браузерами -->
-        <main class="browsers-container">
-            <!-- Окно 1 -->
-            <div class="browser-window" id="window-win1">
-                <div class="window-header">
-                    <div class="window-dots">
-                        <span class="dot dot-red"></span>
-                        <span class="dot dot-yellow"></span>
-                        <span class="dot dot-green"></span>
-                    </div>
-                    <span class="window-title">Окно 1</span>
-                    <div class="window-actions">
-                        <button class="btn-icon" onclick="refreshWindow('win1')" title="Обновить">🔄</button>
-                        <button class="btn-icon" onclick="scrollWindow('win1')" title="Скролл">👇</button>
+            <!-- Фулскрин режим -->
+            <div class="fullscreen-view hidden" id="fullscreenView">
+                <div class="fullscreen-header">
+                    <button class="btn-icon" onclick="exitFullscreen()">✕ Закрыть</button>
+                    <span id="fullscreenTitle">Окно</span>
+                    <div class="fullscreen-url">
+                        <input type="text" id="fullscreenUrlInput" placeholder="URL">
+                        <button class="btn btn-sm" onclick="navigateFullscreen()">Перейти</button>
                     </div>
                 </div>
-                <div class="browser-content" id="content-win1">
-                    <div class="loading">
-                        <div class="loading-spinner"></div>
-                        <p>Загрузка браузера...</p>
-                    </div>
-                </div>
-            </div>
-            
-            <!-- Окно 2 -->
-            <div class="browser-window" id="window-win2">
-                <div class="window-header">
-                    <div class="window-dots">
-                        <span class="dot dot-red"></span>
-                        <span class="dot dot-yellow"></span>
-                        <span class="dot dot-green"></span>
-                    </div>
-                    <span class="window-title">Окно 2</span>
-                    <div class="window-actions">
-                        <button class="btn-icon" onclick="refreshWindow('win2')" title="Обновить">🔄</button>
-                        <button class="btn-icon" onclick="scrollWindow('win2')" title="Скролл">👇</button>
-                    </div>
-                </div>
-                <div class="browser-content" id="content-win2">
-                    <div class="loading">
-                        <div class="loading-spinner"></div>
-                        <p>Загрузка браузера...</p>
-                    </div>
-                </div>
-            </div>
-            
-            <!-- Окно 3 -->
-            <div class="browser-window" id="window-win3">
-                <div class="window-header">
-                    <div class="window-dots">
-                        <span class="dot dot-red"></span>
-                        <span class="dot dot-yellow"></span>
-                        <span class="dot dot-green"></span>
-                    </div>
-                    <span class="window-title">Окно 3</span>
-                    <div class="window-actions">
-                        <button class="btn-icon" onclick="refreshWindow('win3')" title="Обновить">🔄</button>
-                        <button class="btn-icon" onclick="scrollWindow('win3')" title="Скролл">👇</button>
-                    </div>
-                </div>
-                <div class="browser-content" id="content-win3">
-                    <div class="loading">
-                        <div class="loading-spinner"></div>
-                        <p>Загрузка браузера...</p>
-                    </div>
-                </div>
+                <div class="fullscreen-content" id="fullscreenContent"></div>
             </div>
         </main>
-
-        <!-- Нижняя панель статуса -->
-        <footer class="status-bar">
-            <div class="status-info">
-                <span id="statusText">🟢 Готов к работе</span>
-                <span class="separator">|</span>
-                <span id="windowsCount">Окна: 0/3</span>
-                <span class="separator">|</span>
-                <span id="clickersCount">Кликеры: 0</span>
-                <span class="separator">|</span>
-                <span id="autoScrollStatus">Анти-кик: выкл</span>
+        
+        <!-- ========== ПАНЕЛЬ КЛИКЕРОВ ========== -->
+        <aside class="clickers-panel" id="clickersPanel">
+            <div class="panel-header">
+                <h3>🤖 Кликеры</h3>
             </div>
-            <div class="status-version">
-                <span>Real Browser v2.0 | Render</span>
+            <div class="clickers-list" id="clickersList"></div>
+            <div class="panel-footer">
+                <select id="clickerTypeSelect">
+                    <option value="click">🖱️ Клик</option>
+                    <option value="scroll">👆 Скролл</option>
+                    <option value="refresh">🔄 Рефреш</option>
+                    <option value="hover">👉 Ховер</option>
+                    <option value="type">⌨️ Ввод</option>
+                </select>
+                <select id="clickerWindowSelect"></select>
+                <input type="number" id="clickerInterval" value="5000" placeholder="Интервал (мс)">
+                <button class="btn btn-purple btn-sm" onclick="addClickerToWindow()">Добавить</button>
             </div>
-        </footer>
+        </aside>
     </div>
     
     <script src="client.js"></script>
