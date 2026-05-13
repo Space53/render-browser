@@ -20,15 +20,10 @@ body {
     overflow: hidden;
 }
 
-#app {
-    display: flex;
-    flex-direction: column;
-    height: 100vh;
-}
+#app { display: flex; flex-direction: column; height: 100vh; }
 
-/* Верхняя панель */
 .top-bar {
-    padding: 12px 20px;
+    padding: 10px 20px;
     background: var(--bg2);
     border-bottom: 1px solid var(--border);
     display: flex;
@@ -36,21 +31,20 @@ body {
     align-items: center;
 }
 
-.top-bar h1 { font-size: 18px; }
+.top-bar h1 { font-size: 16px; }
 
 .status-badge {
     padding: 5px 12px;
     border-radius: 20px;
-    font-size: 12px;
+    font-size: 11px;
     font-weight: 600;
 }
 
 .status-badge.connected { background: rgba(0, 184, 148, 0.2); color: var(--green); }
 .status-badge.disconnected { background: rgba(233, 69, 96, 0.2); color: var(--red); }
 
-/* Панель управления */
 .control-bar {
-    padding: 10px 20px;
+    padding: 8px 20px;
     background: var(--bg3);
     border-bottom: 1px solid var(--border);
     display: flex;
@@ -59,44 +53,34 @@ body {
     flex-wrap: wrap;
 }
 
-.separator {
-    color: var(--border);
-    font-size: 20px;
+.hint {
+    font-size: 11px;
+    color: var(--accent);
+    margin-left: auto;
 }
 
-#windowsCount {
-    font-size: 13px;
-    color: var(--muted);
-    font-weight: 600;
-}
-
-/* Кнопки */
 .btn {
-    padding: 8px 16px;
+    padding: 7px 14px;
     border: none;
     border-radius: 6px;
     cursor: pointer;
-    font-size: 12px;
+    font-size: 11px;
     font-weight: 600;
     color: white;
     transition: all 0.2s;
     white-space: nowrap;
 }
 
-.btn:hover { transform: translateY(-1px); filter: brightness(1.1); }
-.btn:active { transform: translateY(0); }
-
+.btn:hover { filter: brightness(1.1); transform: translateY(-1px); }
 .btn-primary { background: var(--accent); }
 .btn-success { background: var(--green); }
 .btn-danger { background: var(--red); }
-.btn-purple { background: #a29bfe; }
 
-/* Сетка браузеров */
 .browsers-grid {
     flex: 1;
     display: grid;
-    gap: 8px;
-    padding: 8px;
+    gap: 6px;
+    padding: 6px;
     overflow-y: auto;
 }
 
@@ -105,152 +89,181 @@ body {
 .browsers-grid.cols-3 { grid-template-columns: 1fr 1fr 1fr; }
 .browsers-grid.cols-4 { grid-template-columns: 1fr 1fr; }
 
-/* Карточка браузера */
+/* КАРТОЧКА БРАУЗЕРА */
 .browser-card {
     background: var(--bg2);
-    border-radius: 10px;
+    border-radius: 8px;
     overflow: hidden;
     border: 1px solid var(--border);
     display: flex;
     flex-direction: column;
-    transition: all 0.3s;
-    min-height: 300px;
+    min-height: 250px;
+    position: relative;
 }
 
 .browser-card:hover { border-color: var(--accent); }
 
 .browser-card-header {
-    padding: 8px 12px;
+    padding: 6px 10px;
     background: var(--bg3);
     display: flex;
     justify-content: space-between;
     align-items: center;
     border-bottom: 1px solid var(--border);
     flex-wrap: wrap;
-    gap: 5px;
-}
-
-.browser-title {
-    font-size: 12px;
-    font-weight: 600;
-}
-
-.browser-url {
-    font-size: 10px;
-    color: var(--muted);
-    max-width: 200px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
-.browser-actions {
-    display: flex;
     gap: 4px;
+    z-index: 2;
 }
 
-.btn-sm {
-    padding: 4px 8px;
-    font-size: 10px;
+.browser-title { font-size: 11px; font-weight: 600; }
+.browser-url { 
+    font-size: 9px; 
+    color: var(--muted); 
+    max-width: 150px; 
+    overflow: hidden; 
+    text-overflow: ellipsis; 
+    white-space: nowrap; 
+}
+
+.browser-actions { display: flex; gap: 3px; }
+
+.btn-xs {
+    padding: 3px 6px;
+    font-size: 9px;
     border: none;
-    border-radius: 4px;
+    border-radius: 3px;
     cursor: pointer;
     color: white;
     font-weight: 600;
-    transition: all 0.2s;
+    background: var(--accent);
 }
 
-.btn-sm:hover { filter: brightness(1.2); }
+.btn-xs:hover { filter: brightness(1.2); }
+.btn-xs.active { background: var(--green); }
 
-.btn-sm-nav { background: var(--accent); }
-.btn-sm-refresh { background: #0984e3; }
-.btn-sm-scroll { background: var(--green); }
-.btn-sm-fullscreen { background: #fdcb6e; color: #000; }
-.btn-sm-autoscroll { background: #6c5ce7; }
-.btn-sm-autoscroll.active { background: var(--green); }
-
+/* КОНТЕНТ - ВАЖНО: ИНТЕРАКТИВНЫЙ */
 .browser-content {
     flex: 1;
-    background: #fff;
     position: relative;
     overflow: hidden;
-    cursor: pointer;
+    cursor: crosshair;
+    background: #fff;
 }
 
 .browser-content img {
     width: 100%;
     height: 100%;
     object-fit: contain;
-    display: block;
+    pointer-events: none; /* ВАЖНО: чтобы клики проходили сквозь картинку */
+    user-select: none;
 }
 
-.browser-content .loading {
+/* Оверлей для кликов */
+.click-overlay {
     position: absolute;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-    color: #888;
-    text-align: center;
+    top: 0; left: 0;
+    width: 100%;
+    height: 100%;
+    z-index: 10;
 }
+
+/* Индикатор клика */
+.click-indicator {
+    position: absolute;
+    width: 20px;
+    height: 20px;
+    border: 2px solid var(--accent);
+    border-radius: 50%;
+    pointer-events: none;
+    animation: clickPulse 0.5s ease-out forwards;
+    z-index: 20;
+}
+
+@keyframes clickPulse {
+    0% { transform: scale(0); opacity: 1; }
+    100% { transform: scale(2); opacity: 0; }
+}
+
+/* Оверлей ввода */
+.input-overlay {
+    position: fixed;
+    bottom: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: var(--bg2);
+    padding: 10px 15px;
+    border-radius: 10px;
+    border: 1px solid var(--accent);
+    display: flex;
+    gap: 8px;
+    z-index: 1000;
+    box-shadow: 0 10px 40px rgba(0,0,0,0.5);
+}
+
+.input-overlay input {
+    padding: 8px 12px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text);
+    font-size: 14px;
+    width: 300px;
+}
+
+.input-overlay button {
+    padding: 8px 15px;
+    background: var(--accent);
+    border: none;
+    border-radius: 6px;
+    color: white;
+    cursor: pointer;
+    font-weight: 600;
+}
+
+/* Контекстное меню */
+.context-menu {
+    position: fixed;
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 5px 0;
+    z-index: 1001;
+    min-width: 180px;
+    box-shadow: 0 10px 40px rgba(0,0,0,0.5);
+}
+
+.context-item {
+    padding: 8px 15px;
+    cursor: pointer;
+    font-size: 12px;
+    transition: background 0.2s;
+}
+
+.context-item:hover { background: var(--bg3); }
+
+/* Скрытие */
+.hidden { display: none !important; }
 
 /* Загрузка */
 .loading-screen {
     position: absolute;
-    top: 50%;
-    left: 50%;
+    top: 50%; left: 50%;
     transform: translate(-50%, -50%);
     text-align: center;
 }
 
 .spinner {
-    width: 50px;
-    height: 50px;
-    border: 4px solid var(--border);
-    border-top: 4px solid var(--accent);
+    width: 40px; height: 40px;
+    border: 3px solid var(--border);
+    border-top: 3px solid var(--accent);
     border-radius: 50%;
     animation: spin 1s linear infinite;
-    margin: 0 auto 20px;
+    margin: 0 auto 15px;
 }
 
-@keyframes spin {
-    to { transform: rotate(360deg); }
-}
-
-.sub { color: var(--muted); font-size: 12px; margin-top: 5px; }
-
-/* Фулскрин */
-.browser-card.fullscreen {
-    position: fixed;
-    top: 0; left: 0;
-    width: 100vw;
-    height: 100vh;
-    z-index: 9999;
-    border-radius: 0;
-}
-
-/* Скрытое окно */
-.browser-card.hidden-card {
-    display: none;
-}
+@keyframes spin { to { transform: rotate(360deg); } }
 
 /* Скроллбар */
-::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar { width: 5px; }
 ::-webkit-scrollbar-track { background: var(--bg); }
 ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
-::-webkit-scrollbar-thumb:hover { background: var(--accent); }
-
-/* Инпут для URL */
-.url-input {
-    padding: 4px 8px;
-    background: var(--bg);
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    color: var(--text);
-    font-size: 11px;
-    width: 150px;
-}
-
-.url-input:focus {
-    outline: none;
-    border-color: var(--accent);
-    }
