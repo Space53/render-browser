@@ -8,6 +8,7 @@
     --green: #00b894;
     --red: #e94560;
     --purple: #a29bfe;
+    --warning: #fdcb6e;
     --text: #e0e0e0;
     --muted: #8888aa;
     --border: #2a2a4a;
@@ -24,7 +25,6 @@ body {
 
 #app { display: flex; flex-direction: column; height: 100vh; }
 
-/* Верхняя панель */
 .top-bar {
     padding: 8px 15px;
     background: var(--bg2);
@@ -46,7 +46,6 @@ body {
     text-align: center;
 }
 
-/* Панель управления */
 .control-bar {
     padding: 6px 12px;
     background: var(--bg3);
@@ -58,7 +57,6 @@ body {
 }
 .hint { font-size: 10px; color: var(--accent); margin-left: auto; }
 
-/* Кнопки */
 .btn {
     padding: 6px 12px;
     border: none;
@@ -75,17 +73,8 @@ body {
 .btn-success { background: var(--green); }
 .btn-danger { background: var(--red); }
 .btn-purple { background: var(--purple); }
-.btn-sm {
-    padding: 3px 7px;
-    font-size: 9px;
-    border: none;
-    border-radius: 3px;
-    cursor: pointer;
-    color: white;
-    font-weight: 600;
-}
+.btn-warning { background: var(--warning); color: #000; }
 
-/* Сетка */
 .browsers-grid {
     flex: 1;
     display: grid;
@@ -109,6 +98,7 @@ body {
     position: relative;
 }
 .browser-card.hidden-card { display: none; }
+.browser-card.anonymous { border-color: var(--warning); }
 
 .browser-card-header {
     padding: 4px 8px;
@@ -129,7 +119,26 @@ body {
     text-overflow: ellipsis;
     white-space: nowrap;
 }
-.browser-actions { display: flex; gap: 2px; }
+.badge {
+    font-size: 8px;
+    padding: 2px 5px;
+    border-radius: 3px;
+    font-weight: 600;
+}
+.badge-persistent { background: var(--accent); }
+.badge-anonymous { background: var(--warning); color: #000; }
+
+.browser-actions { display: flex; gap: 2px; flex-wrap: wrap; }
+.btn-sm {
+    padding: 3px 7px;
+    font-size: 9px;
+    border: none;
+    border-radius: 3px;
+    cursor: pointer;
+    color: white;
+    font-weight: 600;
+}
+.btn-sm:hover { filter: brightness(1.2); }
 .btn-sm.autoscroll-active { background: var(--green); }
 
 /* Стрим */
@@ -169,6 +178,48 @@ body {
     100% { transform: scale(2.5); opacity: 0; }
 }
 
+/* Редактор текста */
+.text-editor {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    background: var(--bg2);
+    border-top: 2px solid var(--accent);
+    padding: 15px;
+    z-index: 1000;
+    box-shadow: 0 -10px 40px rgba(0,0,0,0.5);
+}
+.text-editor-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 10px;
+    font-size: 14px;
+    font-weight: 600;
+}
+.text-editor textarea {
+    width: 100%;
+    padding: 12px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--text);
+    font-size: 14px;
+    resize: vertical;
+    font-family: inherit;
+}
+.text-editor-actions {
+    display: flex;
+    gap: 10px;
+    margin-top: 10px;
+}
+.hint-text {
+    font-size: 11px;
+    color: var(--muted);
+    margin-top: 8px;
+}
+
 /* Клавиатура */
 .mobile-keyboard {
     position: fixed;
@@ -177,7 +228,7 @@ body {
     padding: 10px 15px;
     display: flex;
     gap: 8px;
-    z-index: 1000;
+    z-index: 999;
     border-top: 2px solid var(--accent);
 }
 .mobile-keyboard input {
@@ -201,7 +252,6 @@ body {
 
 .hidden { display: none !important; }
 
-/* Загрузка */
 .loading-center {
     position: absolute;
     top: 50%; left: 50%;
@@ -218,7 +268,6 @@ body {
 }
 @keyframes spin { to { transform: rotate(360deg); } }
 
-/* Телефон */
 @media (max-width: 768px) {
     .browsers-grid { grid-template-columns: 1fr !important; }
     .browser-card { min-height: 150px; }
