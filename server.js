@@ -10,10 +10,11 @@ const server = http.createServer(app);
 app.use(express.static(path.join(__dirname, 'public')));
 app.use(express.json());
 
-// Хранилище браузеров
-const browsers = new Map();
-const frameBuffers = new Map(); // windowId -> Buffer
-const clients = new Map(); // windowId -> Set<response>
+// Хранилища
+const browsers = new Map(); // windowId -> { browser, page, url, autoScroll }
+const frameBuffers = new Map();
+const clients = new Map();
+const autoScrolls = new Map();
 
 // ==================== MJPEG СТРИМИНГ ====================
 app.get('/stream/:windowId', (req, res) => {
@@ -21,31 +22,30 @@ app.get('/stream/:windowId', (req, res) => {
     
     res.writeHead(200, {
         'Content-Type': 'multipart/x-mixed-replace; boundary=frame',
-        'Cache-Control': 'no-cache',
-        'Connection': 'close',
-        'Pragma': 'no-cache'
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
+        'Connection': 'keep-alive',
+        'Pragma': 'no-cache',
+        'Expires': '0'
     });
     
-    // Добавляем клиента
     if (!clients.has(windowId)) {
         clients.set(windowId, new Set());
     }
     clients.get(windowId).add(res);
     
-    // Отправляем последний кадр если есть
+    // Сразу отправляем последний кадр
     const buffer = frameBuffers.get(windowId);
     if (buffer) {
-        res.write(`--frame\r\nContent-Type: image/jpeg\r\nContent-Length: ${buffer.length}\r\n\r\n`);
-        res.write(buffer);
-        res.write('\r\n');
+        try {
+            res.write(`--frame\r\nContent-Type: image/jpeg\r\nContent-Length: ${buffer.length}\r\n\r\n`);
+            res.write(buffer);
+            res.write('\r\n');
+        } catch(e) {}
     }
     
-    // Удаляем при отключении
     req.on('close', () => {
-        const windowClients = clients.get(windowId);
-        if (windowClients) {
-            windowClients.delete(res);
-        }
+        const cls = clients.get(windowId);
+        if (cls) cls.delete(res);
     });
 });
 
@@ -58,7 +58,10 @@ async function launchBrowser() {
             '--disable-setuid-sandbox',
             '--disable-dev-shm-usage',
             '--disable-gpu',
-            '--disable-web-security'
+            '--disable-web-security',
+            '--disable-features=IsolateOrigins',
+            '--disable-background-timer-throttling',
+            '--disable-renderer-backgrounding'
         ],
         defaultViewport: { width: 1280, height: 720 },
         executablePath: await chromium.executablePath(),
@@ -70,8 +73,10 @@ async function launchBrowser() {
 // ==================== СОЗДАНИЕ ОКНА ====================
 async function createWindow(windowId, url) {
     try {
+        // Закрываем старый браузер
         if (browsers.has(windowId)) {
             await browsers.get(windowId).browser.close().catch(() => {});
+            browsers.delete(windowId);
         }
         
         const browser = await launchBrowser();
@@ -86,62 +91,71 @@ async function createWindow(windowId, url) {
         await page.setViewport({ width: 1280, height: 720 });
         await page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
         
-        browsers.set(windowId, { browser, page, url });
+        browsers.set(windowId, { browser, page, url, autoScroll: false });
         
-        // Запускаем захват кадров (30 FPS)
-        startFrameCapture(windowId, page);
+        // Запускаем захват кадров
+        startFrameLoop(windowId, page);
         
-        console.log(`✅ Window ${windowId} created: ${url}`);
+        console.log(`✅ ${windowId}: ${url}`);
         return true;
     } catch (error) {
-        console.error(`❌ Error:`, error.message);
+        console.error(`❌ ${windowId}:`, error.message);
         return false;
     }
 }
 
-// ==================== ЗАХВАТ КАДРОВ (30 FPS) ====================
-async function startFrameCapture(windowId, page) {
+// ==================== ЗАХВАТ КАДРОВ (ОПТИМИЗИРОВАННЫЙ) ====================
+function startFrameLoop(windowId, page) {
+    let capturing = false;
+    
     const capture = async () => {
         if (!browsers.has(windowId)) return;
+        if (capturing) return; // Пропускаем если еще захватываем
+        
+        capturing = true;
         
         try {
             const buffer = await page.screenshot({ 
                 type: 'jpeg', 
-                quality: 60,
+                quality: 55,
                 encoding: 'binary'
             });
             
             frameBuffers.set(windowId, buffer);
             
-            // Рассылаем всем подключенным клиентам
-            const windowClients = clients.get(windowId);
-            if (windowClients) {
-                for (const client of windowClients) {
+            // Рассылаем ВСЕМ клиентам
+            const cls = clients.get(windowId);
+            if (cls && cls.size > 0) {
+                const header = `--frame\r\nContent-Type: image/jpeg\r\nContent-Length: ${buffer.length}\r\n\r\n`;
+                
+                for (const client of cls) {
                     try {
-                        client.write(`--frame\r\nContent-Type: image/jpeg\r\nContent-Length: ${buffer.length}\r\n\r\n`);
+                        client.write(header);
                         client.write(buffer);
                         client.write('\r\n');
-                    } catch (e) {
-                        windowClients.delete(client);
+                    } catch(e) {
+                        cls.delete(client);
                     }
                 }
             }
-        } catch (e) {
-            // Игнорируем ошибки кадра
+        } catch(e) {
+            // Игнорируем ошибки
         }
         
-        // Следующий кадр через ~33ms (30 FPS)
-        setTimeout(() => capture(), 33);
+        capturing = false;
+        
+        // Планируем следующий кадр
+        setTimeout(() => capture(), 50); // ~20 FPS
     };
     
     capture();
 }
 
 // ==================== ВЗАИМОДЕЙСТВИЕ ====================
-app.post('/api/interact', express.json(), async (req, res) => {
+app.post('/api/interact', async (req, res) => {
     const { windowId, action, params } = req.body;
-    
     const data = browsers.get(windowId);
+    
     if (!data) {
         return res.json({ success: false, error: 'Window not found' });
     }
@@ -161,8 +175,8 @@ app.post('/api/interact', express.json(), async (req, res) => {
                 break;
             case 'type':
                 await page.mouse.click(params.x, params.y);
-                await new Promise(r => setTimeout(r, 50));
-                await page.keyboard.type(params.text || '', { delay: 30 });
+                await new Promise(r => setTimeout(r, 30));
+                await page.keyboard.type(params.text || '', { delay: 20 });
                 break;
             case 'keypress':
                 await page.keyboard.press(params.key);
@@ -180,26 +194,104 @@ app.post('/api/interact', express.json(), async (req, res) => {
             case 'forward':
                 await page.goForward({ waitUntil: 'networkidle2' });
                 break;
+            case 'scroll-up':
+                await page.evaluate(() => window.scrollBy(0, -300));
+                break;
+            case 'scroll-down':
+                await page.evaluate(() => window.scrollBy(0, 300));
+                break;
+            case 'scroll-top':
+                await page.evaluate(() => window.scrollTo(0, 0));
+                break;
+            case 'scroll-bottom':
+                await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+                break;
         }
         
         res.json({ success: true });
-    } catch (error) {
+    } catch(error) {
         res.json({ success: false, error: error.message });
     }
 });
 
-// ==================== СОЗДАТЬ ОКНО ЧЕРЕЗ API ====================
-app.post('/api/create-window', express.json(), async (req, res) => {
+// ==================== АВТОСКРОЛЛ ====================
+app.post('/api/autoscroll', async (req, res) => {
+    const { windowId, enabled } = req.body;
+    const data = browsers.get(windowId);
+    
+    if (!data) {
+        return res.json({ success: false, error: 'Window not found' });
+    }
+    
+    if (enabled) {
+        // Останавливаем старый
+        if (autoScrolls.has(windowId)) {
+            clearInterval(autoScrolls.get(windowId));
+        }
+        
+        // Запускаем новый
+        const interval = setInterval(async () => {
+            try {
+                await data.page.evaluate(() => {
+                    const h = document.documentElement.scrollHeight;
+                    const s = window.pageYOffset;
+                    if (s + window.innerHeight >= h - 10) {
+                        window.scrollTo({ top: 0, behavior: 'smooth' });
+                    } else {
+                        window.scrollBy({ top: 200, behavior: 'smooth' });
+                    }
+                });
+            } catch(e) {}
+        }, 3000);
+        
+        autoScrolls.set(windowId, interval);
+        data.autoScroll = true;
+    } else {
+        if (autoScrolls.has(windowId)) {
+            clearInterval(autoScrolls.get(windowId));
+            autoScrolls.delete(windowId);
+        }
+        data.autoScroll = false;
+    }
+    
+    res.json({ success: true, autoScroll: enabled });
+});
+
+// ==================== УПРАВЛЕНИЕ ОКНАМИ ====================
+app.post('/api/create-window', async (req, res) => {
     const { windowId, url } = req.body;
     const success = await createWindow(windowId, url);
     res.json({ success, windowId, url });
+});
+
+app.post('/api/close-window', async (req, res) => {
+    const { windowId } = req.body;
+    
+    // Останавливаем автоскролл
+    if (autoScrolls.has(windowId)) {
+        clearInterval(autoScrolls.get(windowId));
+        autoScrolls.delete(windowId);
+    }
+    
+    // Закрываем браузер
+    const data = browsers.get(windowId);
+    if (data) {
+        await data.browser.close().catch(() => {});
+        browsers.delete(windowId);
+    }
+    
+    res.json({ success: true });
 });
 
 // ==================== СТАТУС ====================
 app.get('/api/status', (req, res) => {
     const windows = [];
     for (const [id, data] of browsers) {
-        windows.push({ windowId: id, url: data.url });
+        windows.push({ 
+            windowId: id, 
+            url: data.url,
+            autoScroll: data.autoScroll || false
+        });
     }
     res.json({ windows });
 });
@@ -208,7 +300,7 @@ app.get('/api/status', (req, res) => {
 const PORT = process.env.PORT || 3000;
 
 server.listen(PORT, async () => {
-    console.log(`🚀 Server on port ${PORT}`);
+    console.log(`🚀 Server: ${PORT}`);
     
     const defaults = [
         { id: 'win1', url: 'https://example.com' },
@@ -221,10 +313,11 @@ server.listen(PORT, async () => {
         await new Promise(r => setTimeout(r, 2000));
     }
     
-    console.log('✅ All windows ready');
+    console.log('✅ Ready');
 });
 
 process.on('SIGTERM', async () => {
+    for (const [id, interval] of autoScrolls) clearInterval(interval);
     for (const [id, data] of browsers) {
         await data.browser.close().catch(() => {});
     }
