@@ -3,81 +3,46 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Sync Browser Pro</title>
+    <title>Sync Browser Pro - Real-time</title>
     <link rel="stylesheet" href="styles.css">
     <script src="/socket.io/socket.io.js"></script>
 </head>
 <body>
     <div id="app">
-        <!-- ========== БОКОВАЯ ПАНЕЛЬ ========== -->
-        <aside class="sidebar" id="sidebar">
-            <div class="sidebar-header">
-                <h2>🖥️ Окна</h2>
-                <button class="btn-icon" onclick="toggleSidebar()">◀</button>
+        <!-- Верхняя панель -->
+        <header class="top-bar">
+            <h1>🌐 Sync Browser Pro</h1>
+            <div class="status-badge" id="connectionStatus">
+                🔴 Подключение...
             </div>
-            
-            <div class="windows-list" id="windowsList">
-                <!-- Динамически заполняется -->
-            </div>
-            
-            <div class="sidebar-footer">
-                <button class="btn btn-primary" onclick="addNewWindow()">
-                    ➕ Добавить окно
-                </button>
-            </div>
-        </aside>
+        </header>
         
-        <!-- ========== ОСНОВНАЯ ОБЛАСТЬ ========== -->
-        <main class="main-content" id="mainContent">
-            <!-- Верхняя панель -->
-            <header class="top-bar">
-                <button class="btn-icon" onclick="toggleSidebar()">☰</button>
-                <span class="top-title" id="currentViewTitle">Все окна</span>
-                <div class="top-actions">
-                    <button class="btn btn-sm" onclick="refreshAll()">🔄 Обновить все</button>
-                    <button class="btn btn-sm btn-success" onclick="startAllAutoScroll()">▶ Анти-кик все</button>
-                    <button class="btn btn-sm btn-danger" onclick="stopAllAutoScroll()">⏹ Стоп все</button>
-                </div>
-            </header>
-            
-            <!-- Сетка окон -->
-            <div class="windows-grid" id="windowsGrid">
-                <!-- Динамически заполняется -->
-            </div>
-            
-            <!-- Фулскрин режим -->
-            <div class="fullscreen-view hidden" id="fullscreenView">
-                <div class="fullscreen-header">
-                    <button class="btn-icon" onclick="exitFullscreen()">✕ Закрыть</button>
-                    <span id="fullscreenTitle">Окно</span>
-                    <div class="fullscreen-url">
-                        <input type="text" id="fullscreenUrlInput" placeholder="URL">
-                        <button class="btn btn-sm" onclick="navigateFullscreen()">Перейти</button>
-                    </div>
-                </div>
-                <div class="fullscreen-content" id="fullscreenContent"></div>
-            </div>
-        </main>
+        <!-- Панель управления -->
+        <div class="control-bar">
+            <button class="btn btn-primary" onclick="createNewWindow()">
+                ➕ Новое окно
+            </button>
+            <button class="btn btn-success" onclick="startAllAutoScroll()">
+                ▶ Анти-кик ВСЕ
+            </button>
+            <button class="btn btn-danger" onclick="stopAllAutoScroll()">
+                ⏹ Стоп ВСЕ
+            </button>
+            <button class="btn btn-purple" onclick="refreshAll()">
+                🔄 Обновить ВСЕ
+            </button>
+            <span class="separator">|</span>
+            <span id="windowsCount">Окна: 0</span>
+        </div>
         
-        <!-- ========== ПАНЕЛЬ КЛИКЕРОВ ========== -->
-        <aside class="clickers-panel" id="clickersPanel">
-            <div class="panel-header">
-                <h3>🤖 Кликеры</h3>
+        <!-- Сетка браузеров -->
+        <div class="browsers-grid" id="browsersGrid">
+            <div class="loading-screen">
+                <div class="spinner"></div>
+                <p>Запуск браузеров...</p>
+                <p class="sub">Ожидайте, создаются окна Chromium</p>
             </div>
-            <div class="clickers-list" id="clickersList"></div>
-            <div class="panel-footer">
-                <select id="clickerTypeSelect">
-                    <option value="click">🖱️ Клик</option>
-                    <option value="scroll">👆 Скролл</option>
-                    <option value="refresh">🔄 Рефреш</option>
-                    <option value="hover">👉 Ховер</option>
-                    <option value="type">⌨️ Ввод</option>
-                </select>
-                <select id="clickerWindowSelect"></select>
-                <input type="number" id="clickerInterval" value="5000" placeholder="Интервал (мс)">
-                <button class="btn btn-purple btn-sm" onclick="addClickerToWindow()">Добавить</button>
-            </div>
-        </aside>
+        </div>
     </div>
     
     <script src="client.js"></script>
