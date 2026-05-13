@@ -3,45 +3,47 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Sync Browser Pro - Real-time</title>
+    <title>Interactive Browser</title>
     <link rel="stylesheet" href="styles.css">
     <script src="/socket.io/socket.io.js"></script>
 </head>
 <body>
     <div id="app">
-        <!-- Верхняя панель -->
         <header class="top-bar">
-            <h1>🌐 Sync Browser Pro</h1>
-            <div class="status-badge" id="connectionStatus">
-                🔴 Подключение...
-            </div>
+            <h1>🌐 Interactive Browser Pro</h1>
+            <div id="connectionStatus" class="status-badge">🔴 Подключение...</div>
         </header>
         
-        <!-- Панель управления -->
         <div class="control-bar">
-            <button class="btn btn-primary" onclick="createNewWindow()">
-                ➕ Новое окно
-            </button>
-            <button class="btn btn-success" onclick="startAllAutoScroll()">
-                ▶ Анти-кик ВСЕ
-            </button>
-            <button class="btn btn-danger" onclick="stopAllAutoScroll()">
-                ⏹ Стоп ВСЕ
-            </button>
-            <button class="btn btn-purple" onclick="refreshAll()">
-                🔄 Обновить ВСЕ
-            </button>
-            <span class="separator">|</span>
+            <button class="btn btn-primary" onclick="createNewWindow()">➕ Окно</button>
+            <button class="btn btn-success" onclick="startAllAutoScroll()">▶ Анти-кик</button>
+            <button class="btn btn-danger" onclick="stopAllAutoScroll()">⏹ Стоп</button>
             <span id="windowsCount">Окна: 0</span>
+            <span class="hint">💡 Кликайте, скролльте, вводите текст прямо на сайтах!</span>
         </div>
         
-        <!-- Сетка браузеров -->
         <div class="browsers-grid" id="browsersGrid">
             <div class="loading-screen">
                 <div class="spinner"></div>
                 <p>Запуск браузеров...</p>
-                <p class="sub">Ожидайте, создаются окна Chromium</p>
             </div>
+        </div>
+        
+        <!-- Панель ввода текста (появляется при фокусе) -->
+        <div id="inputOverlay" class="input-overlay hidden">
+            <input type="text" id="textInput" placeholder="Введите текст и нажмите Enter..." />
+            <button onclick="sendText()">Отправить</button>
+            <button onclick="hideInput()">✕</button>
+        </div>
+        
+        <!-- Контекстное меню -->
+        <div id="contextMenu" class="context-menu hidden">
+            <div class="context-item" onclick="contextAction('navigate')">🔗 Перейти по URL...</div>
+            <div class="context-item" onclick="contextAction('refresh')">🔄 Обновить</div>
+            <div class="context-item" onclick="contextAction('back')">◀ Назад</div>
+            <div class="context-item" onclick="contextAction('forward')">▶ Вперед</div>
+            <div class="context-item" onclick="contextAction('scroll-top')">⬆ В начало</div>
+            <div class="context-item" onclick="contextAction('scroll-bottom')">⬇ В конец</div>
         </div>
     </div>
     
