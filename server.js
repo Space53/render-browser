@@ -11,10 +11,11 @@ app.use(express.static(path.join(__dirname, 'public')));
 app.use(express.json());
 
 // Хранилища
-const browsers = new Map(); // windowId -> { browser, page, url, autoScroll }
+const browsers = new Map();
 const frameBuffers = new Map();
 const clients = new Map();
 const autoScrolls = new Map();
+const persistentWindows = new Set(); // Постоянные окна
 
 // ==================== MJPEG СТРИМИНГ ====================
 app.get('/stream/:windowId', (req, res) => {
@@ -33,7 +34,6 @@ app.get('/stream/:windowId', (req, res) => {
     }
     clients.get(windowId).add(res);
     
-    // Сразу отправляем последний кадр
     const buffer = frameBuffers.get(windowId);
     if (buffer) {
         try {
@@ -71,9 +71,8 @@ async function launchBrowser() {
 }
 
 // ==================== СОЗДАНИЕ ОКНА ====================
-async function createWindow(windowId, url) {
+async function createWindow(windowId, url, isPersistent = true) {
     try {
-        // Закрываем старый браузер
         if (browsers.has(windowId)) {
             await browsers.get(windowId).browser.close().catch(() => {});
             browsers.delete(windowId);
@@ -91,12 +90,15 @@ async function createWindow(windowId, url) {
         await page.setViewport({ width: 1280, height: 720 });
         await page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
         
-        browsers.set(windowId, { browser, page, url, autoScroll: false });
+        browsers.set(windowId, { browser, page, url, autoScroll: false, isPersistent });
         
-        // Запускаем захват кадров
+        if (isPersistent) {
+            persistentWindows.add(windowId);
+        }
+        
         startFrameLoop(windowId, page);
         
-        console.log(`✅ ${windowId}: ${url}`);
+        console.log(`✅ ${windowId} (${isPersistent ? 'persistent' : 'anonymous'}): ${url}`);
         return true;
     } catch (error) {
         console.error(`❌ ${windowId}:`, error.message);
@@ -104,13 +106,13 @@ async function createWindow(windowId, url) {
     }
 }
 
-// ==================== ЗАХВАТ КАДРОВ (ОПТИМИЗИРОВАННЫЙ) ====================
+// ==================== ЗАХВАТ КАДРОВ ====================
 function startFrameLoop(windowId, page) {
     let capturing = false;
     
     const capture = async () => {
         if (!browsers.has(windowId)) return;
-        if (capturing) return; // Пропускаем если еще захватываем
+        if (capturing) return;
         
         capturing = true;
         
@@ -123,7 +125,6 @@ function startFrameLoop(windowId, page) {
             
             frameBuffers.set(windowId, buffer);
             
-            // Рассылаем ВСЕМ клиентам
             const cls = clients.get(windowId);
             if (cls && cls.size > 0) {
                 const header = `--frame\r\nContent-Type: image/jpeg\r\nContent-Length: ${buffer.length}\r\n\r\n`;
@@ -138,14 +139,10 @@ function startFrameLoop(windowId, page) {
                     }
                 }
             }
-        } catch(e) {
-            // Игнорируем ошибки
-        }
+        } catch(e) {}
         
         capturing = false;
-        
-        // Планируем следующий кадр
-        setTimeout(() => capture(), 50); // ~20 FPS
+        setTimeout(() => capture(), 50);
     };
     
     capture();
@@ -173,10 +170,34 @@ app.post('/api/interact', async (req, res) => {
             case 'scroll':
                 await page.evaluate(({ x, y }) => window.scrollBy(x, y), params);
                 break;
+            case 'scroll-up':
+                await page.evaluate(() => window.scrollBy(0, -300));
+                break;
+            case 'scroll-down':
+                await page.evaluate(() => window.scrollBy(0, 300));
+                break;
+            case 'scroll-top':
+                await page.evaluate(() => window.scrollTo(0, 0));
+                break;
+            case 'scroll-bottom':
+                await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+                break;
             case 'type':
+                // Кликаем в нужное место для фокуса
                 await page.mouse.click(params.x, params.y);
+                await new Promise(r => setTimeout(r, 50));
+                
+                // Выделяем всё и удаляем (Ctrl+A, Delete)
+                await page.keyboard.down('Control');
+                await page.keyboard.press('KeyA');
+                await page.keyboard.up('Control');
+                await page.keyboard.press('Backspace');
                 await new Promise(r => setTimeout(r, 30));
-                await page.keyboard.type(params.text || '', { delay: 20 });
+                
+                // Вводим новый текст
+                if (params.text) {
+                    await page.keyboard.type(params.text, { delay: 20 });
+                }
                 break;
             case 'keypress':
                 await page.keyboard.press(params.key);
@@ -194,18 +215,6 @@ app.post('/api/interact', async (req, res) => {
             case 'forward':
                 await page.goForward({ waitUntil: 'networkidle2' });
                 break;
-            case 'scroll-up':
-                await page.evaluate(() => window.scrollBy(0, -300));
-                break;
-            case 'scroll-down':
-                await page.evaluate(() => window.scrollBy(0, 300));
-                break;
-            case 'scroll-top':
-                await page.evaluate(() => window.scrollTo(0, 0));
-                break;
-            case 'scroll-bottom':
-                await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
-                break;
         }
         
         res.json({ success: true });
@@ -219,17 +228,11 @@ app.post('/api/autoscroll', async (req, res) => {
     const { windowId, enabled } = req.body;
     const data = browsers.get(windowId);
     
-    if (!data) {
-        return res.json({ success: false, error: 'Window not found' });
-    }
+    if (!data) return res.json({ success: false });
     
     if (enabled) {
-        // Останавливаем старый
-        if (autoScrolls.has(windowId)) {
-            clearInterval(autoScrolls.get(windowId));
-        }
+        if (autoScrolls.has(windowId)) clearInterval(autoScrolls.get(windowId));
         
-        // Запускаем новый
         const interval = setInterval(async () => {
             try {
                 await data.page.evaluate(() => {
@@ -259,38 +262,38 @@ app.post('/api/autoscroll', async (req, res) => {
 
 // ==================== УПРАВЛЕНИЕ ОКНАМИ ====================
 app.post('/api/create-window', async (req, res) => {
-    const { windowId, url } = req.body;
-    const success = await createWindow(windowId, url);
-    res.json({ success, windowId, url });
+    const { windowId, url, persistent } = req.body;
+    const isPersistent = persistent !== false;
+    const success = await createWindow(windowId, url, isPersistent);
+    res.json({ success, windowId, url, persistent: isPersistent });
 });
 
 app.post('/api/close-window', async (req, res) => {
     const { windowId } = req.body;
     
-    // Останавливаем автоскролл
     if (autoScrolls.has(windowId)) {
         clearInterval(autoScrolls.get(windowId));
         autoScrolls.delete(windowId);
     }
     
-    // Закрываем браузер
     const data = browsers.get(windowId);
     if (data) {
         await data.browser.close().catch(() => {});
         browsers.delete(windowId);
     }
     
+    persistentWindows.delete(windowId);
     res.json({ success: true });
 });
 
-// ==================== СТАТУС ====================
 app.get('/api/status', (req, res) => {
     const windows = [];
     for (const [id, data] of browsers) {
         windows.push({ 
             windowId: id, 
             url: data.url,
-            autoScroll: data.autoScroll || false
+            autoScroll: data.autoScroll || false,
+            persistent: persistentWindows.has(id)
         });
     }
     res.json({ windows });
@@ -302,14 +305,15 @@ const PORT = process.env.PORT || 3000;
 server.listen(PORT, async () => {
     console.log(`🚀 Server: ${PORT}`);
     
+    // Постоянные окна
     const defaults = [
-        { id: 'win1', url: 'https://example.com' },
-        { id: 'win2', url: 'https://google.com' },
-        { id: 'win3', url: 'https://github.com' }
+        { id: 'main1', url: 'https://example.com', persistent: true },
+        { id: 'main2', url: 'https://google.com', persistent: true },
+        { id: 'main3', url: 'https://github.com', persistent: true }
     ];
     
     for (const win of defaults) {
-        await createWindow(win.id, win.url);
+        await createWindow(win.id, win.url, win.persistent);
         await new Promise(r => setTimeout(r, 2000));
     }
     
