@@ -1,25 +1,53 @@
 const express = require('express');
 const http = require('http');
-const { Server } = require('socket.io');
 const path = require('path');
 const puppeteer = require('puppeteer-core');
 const chromium = require('@sparticuz/chromium');
 
 const app = express();
 const server = http.createServer(app);
-const io = new Server(server, {
-    maxHttpBufferSize: 1e8,
-    pingTimeout: 120000,
-    pingInterval: 25000
-});
 
 app.use(express.static(path.join(__dirname, 'public')));
 app.use(express.json());
 
+// Хранилище браузеров
 const browsers = new Map();
-const streams = new Map();
-const autoScrolls = new Map();
-const clickers = new Map();
+const frameBuffers = new Map(); // windowId -> Buffer
+const clients = new Map(); // windowId -> Set<response>
+
+// ==================== MJPEG СТРИМИНГ ====================
+app.get('/stream/:windowId', (req, res) => {
+    const windowId = req.params.windowId;
+    
+    res.writeHead(200, {
+        'Content-Type': 'multipart/x-mixed-replace; boundary=frame',
+        'Cache-Control': 'no-cache',
+        'Connection': 'close',
+        'Pragma': 'no-cache'
+    });
+    
+    // Добавляем клиента
+    if (!clients.has(windowId)) {
+        clients.set(windowId, new Set());
+    }
+    clients.get(windowId).add(res);
+    
+    // Отправляем последний кадр если есть
+    const buffer = frameBuffers.get(windowId);
+    if (buffer) {
+        res.write(`--frame\r\nContent-Type: image/jpeg\r\nContent-Length: ${buffer.length}\r\n\r\n`);
+        res.write(buffer);
+        res.write('\r\n');
+    }
+    
+    // Удаляем при отключении
+    req.on('close', () => {
+        const windowClients = clients.get(windowId);
+        if (windowClients) {
+            windowClients.delete(res);
+        }
+    });
+});
 
 // ==================== ЗАПУСК БРАУЗЕРА ====================
 async function launchBrowser() {
@@ -29,12 +57,13 @@ async function launchBrowser() {
             '--no-sandbox',
             '--disable-setuid-sandbox',
             '--disable-dev-shm-usage',
-            '--disable-gpu'
+            '--disable-gpu',
+            '--disable-web-security'
         ],
         defaultViewport: { width: 1280, height: 720 },
         executablePath: await chromium.executablePath(),
         headless: chromium.headless,
-        ignoreHTTPErseErrors: true
+        ignoreHTTPSErrors: true
     });
 }
 
@@ -43,13 +72,11 @@ async function createWindow(windowId, url) {
     try {
         if (browsers.has(windowId)) {
             await browsers.get(windowId).browser.close().catch(() => {});
-            browsers.delete(windowId);
         }
         
         const browser = await launchBrowser();
         const page = await browser.newPage();
         
-        // Анти-детект
         await page.evaluateOnNewDocument(() => {
             Object.defineProperty(navigator, 'webdriver', { get: () => false });
             window.chrome = { runtime: {} };
@@ -57,290 +84,131 @@ async function createWindow(windowId, url) {
         
         await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36');
         await page.setViewport({ width: 1280, height: 720 });
-        
         await page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
         
-        browsers.set(windowId, { browser, page, url, createdAt: Date.now() });
+        browsers.set(windowId, { browser, page, url });
+        
+        // Запускаем захват кадров (30 FPS)
+        startFrameCapture(windowId, page);
+        
         console.log(`✅ Window ${windowId} created: ${url}`);
         return true;
     } catch (error) {
-        console.error(`❌ Create ${windowId}:`, error.message);
+        console.error(`❌ Error:`, error.message);
         return false;
     }
 }
 
-// ==================== СКРИНШОТ ====================
-async function takeScreenshot(windowId) {
-    const data = browsers.get(windowId);
-    if (!data) return null;
-    try {
-        const buffer = await data.page.screenshot({ 
-            encoding: 'base64', 
-            type: 'jpeg', 
-            quality: 50 
-        });
-        return `data:image/jpeg;base64,${buffer}`;
-    } catch (e) {
-        return null;
-    }
-}
-
-// ==================== ПОЛУЧИТЬ РАЗМЕРЫ СТРАНИЦЫ ====================
-async function getPageDimensions(windowId) {
-    const data = browsers.get(windowId);
-    if (!data) return null;
-    try {
-        return await data.page.evaluate(() => ({
-            width: document.documentElement.clientWidth,
-            height: document.documentElement.clientHeight,
-            scrollWidth: document.documentElement.scrollWidth,
-            scrollHeight: document.documentElement.scrollHeight,
-            devicePixelRatio: window.devicePixelRatio
-        }));
-    } catch (e) {
-        return null;
-    }
-}
-
-// ==================== ВЫПОЛНИТЬ ДЕЙСТВИЕ ====================
-async function executeAction(windowId, action, params = {}) {
-    const data = browsers.get(windowId);
-    if (!data) throw new Error('Window not found');
-    
-    const page = data.page;
-    
-    switch(action) {
-        // ========== КЛИК МЫШИ ==========
-        case 'click':
-            await page.mouse.click(params.x, params.y);
-            break;
-            
-        // ========== ДВОЙНОЙ КЛИК ==========
-        case 'dblclick':
-            await page.mouse.click(params.x, params.y, { clickCount: 2 });
-            break;
-            
-        // ========== ПРАВЫЙ КЛИК ==========
-        case 'rightclick':
-            await page.mouse.click(params.x, params.y, { button: 'right' });
-            break;
-            
-        // ========== ДВИЖЕНИЕ МЫШИ ==========
-        case 'mousemove':
-            await page.mouse.move(params.x, params.y);
-            break;
-            
-        // ========== СКРОЛЛ ==========
-        case 'scroll':
-            await page.evaluate(({ x, y }) => {
-                window.scrollBy(x, y);
-            }, params);
-            break;
-            
-        // ========== ВВОД ТЕКСТА ==========
-        case 'type':
-            // Сначала кликаем в точку для фокуса
-            await page.mouse.click(params.x, params.y);
-            await new Promise(r => setTimeout(r, 100));
-            // Вводим текст
-            await page.keyboard.type(params.text || '', { delay: 50 });
-            break;
-            
-        // ========== НАЖАТИЕ КЛАВИШИ ==========
-        case 'keypress':
-            await page.keyboard.press(params.key);
-            break;
-            
-        // ========== НАВИГАЦИЯ ==========
-        case 'navigate':
-            await page.goto(params.url, { waitUntil: 'networkidle2', timeout: 30000 });
-            data.url = params.url;
-            break;
-            
-        // ========== ОБНОВЛЕНИЕ ==========
-        case 'refresh':
-            await page.reload({ waitUntil: 'networkidle2', timeout: 30000 });
-            break;
-            
-        // ========== НАЗАД ==========
-        case 'back':
-            await page.goBack({ waitUntil: 'networkidle2', timeout: 10000 });
-            break;
-            
-        // ========== ВПЕРЕД ==========
-        case 'forward':
-            await page.goForward({ waitUntil: 'networkidle2', timeout: 10000 });
-            break;
-            
-        default:
-            throw new Error(`Unknown action: ${action}`);
-    }
-    
-    // Небольшая задержка для рендера
-    await new Promise(r => setTimeout(r, 200));
-    
-    // Возвращаем новый скриншот
-    return await takeScreenshot(windowId);
-}
-
-// ==================== СТРИМ ====================
-function startStreaming(windowId) {
-    stopStreaming(windowId);
-    const interval = setInterval(async () => {
-        const screenshot = await takeScreenshot(windowId);
-        if (screenshot) {
-            io.emit('screenshot', { 
-                windowId, 
-                screenshot, 
-                timestamp: Date.now() 
-            });
-        }
-    }, 800); // Каждые 800ms
-    streams.set(windowId, interval);
-}
-
-function stopStreaming(windowId) {
-    if (streams.has(windowId)) {
-        clearInterval(streams.get(windowId));
-        streams.delete(windowId);
-    }
-}
-
-// ==================== АВТОСКРОЛЛ ====================
-function startAutoScroll(windowId) {
-    stopAutoScroll(windowId);
-    const interval = setInterval(async () => {
-        const data = browsers.get(windowId);
-        if (!data) return;
-        try {
-            await data.page.evaluate(() => {
-                const h = document.documentElement.scrollHeight;
-                const s = window.pageYOffset;
-                if (s + window.innerHeight >= h - 10) {
-                    window.scrollTo({ top: 0, behavior: 'smooth' });
-                } else {
-                    window.scrollBy({ top: 200, behavior: 'smooth' });
-                }
-            });
-        } catch (e) {}
-    }, 3000);
-    autoScrolls.set(windowId, interval);
-}
-
-function stopAutoScroll(windowId) {
-    if (autoScrolls.has(windowId)) {
-        clearInterval(autoScrolls.get(windowId));
-        autoScrolls.delete(windowId);
-    }
-}
-
-// ==================== WEBSOCKET ====================
-io.on('connection', async (socket) => {
-    console.log('🔵 Connected:', socket.id);
-    
-    // Отправляем статус
-    const status = [];
-    for (const [id, data] of browsers) {
-        const dims = await getPageDimensions(id);
-        status.push({
-            windowId: id,
-            url: data.url,
-            autoScroll: autoScrolls.has(id),
-            dimensions: dims
-        });
-    }
-    socket.emit('status', { windows: status });
-    
-    // Стримим существующие
-    for (const [id] of browsers) {
-        startStreaming(id);
-        const screenshot = await takeScreenshot(id);
-        const dims = await getPageDimensions(id);
-        if (screenshot) {
-            socket.emit('screenshot', { 
-                windowId: id, 
-                screenshot, 
-                dimensions: dims,
-                timestamp: Date.now() 
-            });
-        }
-    }
-    
-    // ========== СОЗДАТЬ ОКНО ==========
-    socket.on('create-window', async ({ windowId, url }) => {
-        const success = await createWindow(windowId, url);
-        if (success) {
-            startStreaming(windowId);
-            const screenshot = await takeScreenshot(windowId);
-            const dims = await getPageDimensions(windowId);
-            io.emit('window-created', { 
-                success: true, 
-                windowId, 
-                url, 
-                screenshot,
-                dimensions: dims
-            });
-        } else {
-            socket.emit('window-created', { 
-                success: false, 
-                windowId, 
-                error: 'Failed to create' 
-            });
-        }
-    });
-    
-    // ========== ВЫПОЛНИТЬ ДЕЙСТВИЕ (КЛИК, СКРОЛЛ, ВВОД) ==========
-    socket.on('interact', async ({ windowId, action, params }) => {
-        console.log(`🖱️ Interact ${windowId}: ${action}`, params);
+// ==================== ЗАХВАТ КАДРОВ (30 FPS) ====================
+async function startFrameCapture(windowId, page) {
+    const capture = async () => {
+        if (!browsers.has(windowId)) return;
         
         try {
-            const screenshot = await executeAction(windowId, action, params);
-            const dims = await getPageDimensions(windowId);
-            
-            socket.emit('interact-result', {
-                success: true,
-                windowId,
-                action,
-                screenshot,
-                dimensions: dims
+            const buffer = await page.screenshot({ 
+                type: 'jpeg', 
+                quality: 60,
+                encoding: 'binary'
             });
             
-            // Также отправляем всем (для синхронизации)
-            io.emit('screenshot', {
-                windowId,
-                screenshot,
-                dimensions: dims,
-                timestamp: Date.now()
-            });
+            frameBuffers.set(windowId, buffer);
             
-        } catch (error) {
-            socket.emit('interact-result', {
-                success: false,
-                windowId,
-                action,
-                error: error.message
-            });
+            // Рассылаем всем подключенным клиентам
+            const windowClients = clients.get(windowId);
+            if (windowClients) {
+                for (const client of windowClients) {
+                    try {
+                        client.write(`--frame\r\nContent-Type: image/jpeg\r\nContent-Length: ${buffer.length}\r\n\r\n`);
+                        client.write(buffer);
+                        client.write('\r\n');
+                    } catch (e) {
+                        windowClients.delete(client);
+                    }
+                }
+            }
+        } catch (e) {
+            // Игнорируем ошибки кадра
         }
-    });
+        
+        // Следующий кадр через ~33ms (30 FPS)
+        setTimeout(() => capture(), 33);
+    };
     
-    // ========== АВТОСКРОЛЛ ==========
-    socket.on('toggle-autoscroll', ({ windowId, enabled }) => {
-        if (enabled) startAutoScroll(windowId);
-        else stopAutoScroll(windowId);
-        io.emit('autoscroll-changed', { windowId, enabled });
-    });
+    capture();
+}
+
+// ==================== ВЗАИМОДЕЙСТВИЕ ====================
+app.post('/api/interact', express.json(), async (req, res) => {
+    const { windowId, action, params } = req.body;
     
-    // ========== ОТКЛЮЧЕНИЕ ==========
-    socket.on('disconnect', () => {
-        console.log('🔴 Disconnected:', socket.id);
-    });
+    const data = browsers.get(windowId);
+    if (!data) {
+        return res.json({ success: false, error: 'Window not found' });
+    }
+    
+    try {
+        const page = data.page;
+        
+        switch(action) {
+            case 'click':
+                await page.mouse.click(params.x, params.y);
+                break;
+            case 'dblclick':
+                await page.mouse.click(params.x, params.y, { clickCount: 2 });
+                break;
+            case 'scroll':
+                await page.evaluate(({ x, y }) => window.scrollBy(x, y), params);
+                break;
+            case 'type':
+                await page.mouse.click(params.x, params.y);
+                await new Promise(r => setTimeout(r, 50));
+                await page.keyboard.type(params.text || '', { delay: 30 });
+                break;
+            case 'keypress':
+                await page.keyboard.press(params.key);
+                break;
+            case 'navigate':
+                await page.goto(params.url, { waitUntil: 'networkidle2', timeout: 30000 });
+                data.url = params.url;
+                break;
+            case 'refresh':
+                await page.reload({ waitUntil: 'networkidle2', timeout: 30000 });
+                break;
+            case 'back':
+                await page.goBack({ waitUntil: 'networkidle2' });
+                break;
+            case 'forward':
+                await page.goForward({ waitUntil: 'networkidle2' });
+                break;
+        }
+        
+        res.json({ success: true });
+    } catch (error) {
+        res.json({ success: false, error: error.message });
+    }
+});
+
+// ==================== СОЗДАТЬ ОКНО ЧЕРЕЗ API ====================
+app.post('/api/create-window', express.json(), async (req, res) => {
+    const { windowId, url } = req.body;
+    const success = await createWindow(windowId, url);
+    res.json({ success, windowId, url });
+});
+
+// ==================== СТАТУС ====================
+app.get('/api/status', (req, res) => {
+    const windows = [];
+    for (const [id, data] of browsers) {
+        windows.push({ windowId: id, url: data.url });
+    }
+    res.json({ windows });
 });
 
 // ==================== ЗАПУСК ====================
 const PORT = process.env.PORT || 3000;
 
 server.listen(PORT, async () => {
-    console.log(`\n🚀 Server on port ${PORT}\n`);
+    console.log(`🚀 Server on port ${PORT}`);
     
     const defaults = [
         { id: 'win1', url: 'https://example.com' },
@@ -349,18 +217,14 @@ server.listen(PORT, async () => {
     ];
     
     for (const win of defaults) {
-        const success = await createWindow(win.id, win.url);
-        if (success) startStreaming(win.id);
+        await createWindow(win.id, win.url);
         await new Promise(r => setTimeout(r, 2000));
     }
     
-    console.log('\n✅ All windows ready!\n');
+    console.log('✅ All windows ready');
 });
 
-// ==================== ОЧИСТКА ====================
 process.on('SIGTERM', async () => {
-    for (const [id, interval] of streams) clearInterval(interval);
-    for (const [id, interval] of autoScrolls) clearInterval(interval);
     for (const [id, data] of browsers) {
         await data.browser.close().catch(() => {});
     }
