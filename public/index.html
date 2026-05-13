@@ -3,34 +3,40 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>Live Browser</title>
+    <title>Live Browser Pro</title>
     <link rel="stylesheet" href="styles.css">
 </head>
 <body>
     <div id="app">
+        <!-- Верхняя панель -->
         <header class="top-bar">
-            <h1>🌐 Live Browser</h1>
-            <span id="fps">30 FPS</span>
+            <h1>🌐 Live Browser Pro</h1>
+            <span id="fpsCounter">⚡ -- FPS</span>
         </header>
         
+        <!-- Панель управления -->
         <div class="control-bar">
             <button class="btn btn-primary" onclick="createNewWindow()">➕ Окно</button>
+            <button class="btn btn-success" onclick="startAllAutoScroll()">▶ Анти-кик ВСЕ</button>
+            <button class="btn btn-danger" onclick="stopAllAutoScroll()">⏹ Стоп ВСЕ</button>
+            <button class="btn btn-purple" onclick="refreshAll()">🔄 Обновить ВСЕ</button>
             <span id="windowsCount">Окна: 0</span>
-            <span class="hint">👆 Кликайте, скролльте, вводите текст прямо на сайтах!</span>
+            <span class="hint">👆 Кликайте | Колесо=скролл | Двойной тап=ввод</span>
         </div>
         
+        <!-- Сетка браузеров -->
         <div class="browsers-grid" id="browsersGrid">
-            <div class="loading-screen">
+            <div class="loading-center">
                 <div class="spinner"></div>
                 <p>Запуск браузеров...</p>
             </div>
         </div>
         
-        <!-- Клавиатура для телефона -->
+        <!-- Мобильная клавиатура -->
         <div id="mobileKeyboard" class="mobile-keyboard hidden">
             <input type="text" id="mobileInput" placeholder="Введите текст..." autocomplete="off" />
             <button onclick="sendMobileText()">➤</button>
-            <button onclick="hideMobileKeyboard()">✕</button>
+            <button onclick="hideKeyboard()">✕</button>
         </div>
     </div>
     
