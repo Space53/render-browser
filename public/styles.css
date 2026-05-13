@@ -1,0 +1,323 @@
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+    background: #0a0a1a;
+    color: #e0e0e0;
+    overflow: hidden;
+    height: 100vh;
+}
+
+#app {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+}
+
+/* Панель управления */
+.control-panel {
+    background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+    padding: 12px 20px;
+    border-bottom: 2px solid #0f3460;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+}
+
+.url-bar {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 10px;
+}
+
+.url-bar input {
+    flex: 1;
+    padding: 10px 15px;
+    background: #0a0a1a;
+    border: 2px solid #0f3460;
+    border-radius: 8px;
+    color: #e0e0e0;
+    font-size: 14px;
+    transition: all 0.3s;
+}
+
+.url-bar input:focus {
+    outline: none;
+    border-color: #e94560;
+    box-shadow: 0 0 15px rgba(233, 69, 96, 0.3);
+}
+
+.tools-bar {
+    display: flex;
+    gap: 15px;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+.tool-group {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.tool-label {
+    font-size: 13px;
+    color: #a0a0a0;
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.separator {
+    width: 1px;
+    height: 25px;
+    background: #0f3460;
+}
+
+/* Кнопки */
+.btn {
+    padding: 8px 16px;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 600;
+    transition: all 0.3s;
+    color: white;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    white-space: nowrap;
+}
+
+.btn:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
+}
+
+.btn:active {
+    transform: translateY(0);
+}
+
+.btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    transform: none;
+}
+
+.btn-primary { 
+    background: linear-gradient(135deg, #e94560, #c23152); 
+}
+.btn-secondary { 
+    background: linear-gradient(135deg, #0f3460, #1a1a2e); 
+}
+.btn-success { 
+    background: linear-gradient(135deg, #00b894, #00a381); 
+}
+.btn-danger { 
+    background: linear-gradient(135deg, #d63031, #b71c1c); 
+}
+.btn-purple { 
+    background: linear-gradient(135deg, #6c5ce7, #5a4bd1); 
+}
+.btn-indigo { 
+    background: linear-gradient(135deg, #a29bfe, #8b83e8); 
+}
+.btn-orange { 
+    background: linear-gradient(135deg, #e17055, #d35400); 
+}
+.btn-teal { 
+    background: linear-gradient(135deg, #00cec9, #00b5b0); 
+}
+.btn-pink { 
+    background: linear-gradient(135deg, #fd79a8, #e84393); 
+}
+
+.btn-icon {
+    background: transparent;
+    border: none;
+    color: #a0a0a0;
+    cursor: pointer;
+    padding: 5px 8px;
+    font-size: 14px;
+    border-radius: 4px;
+    transition: all 0.2s;
+}
+
+.btn-icon:hover {
+    background: rgba(233, 69, 96, 0.2);
+    color: #e94560;
+}
+
+/* Активные кликеры */
+.clicker-badge {
+    background: #0f3460;
+    padding: 4px 12px;
+    border-radius: 20px;
+    font-size: 11px;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    border: 1px solid #1a5276;
+}
+
+.clicker-badge .remove-clicker {
+    cursor: pointer;
+    color: #e94560;
+    font-weight: bold;
+    font-size: 14px;
+}
+
+.clicker-badge .remove-clicker:hover {
+    color: #ff6b6b;
+}
+
+/* Контейнер с браузерами */
+.browsers-container {
+    flex: 1;
+    display: flex;
+    gap: 8px;
+    padding: 8px;
+    background: #0a0a1a;
+    overflow: hidden;
+}
+
+.browser-window {
+    flex: 1;
+    background: #1a1a2e;
+    border-radius: 10px;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    border: 2px solid #0f3460;
+    box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5);
+    transition: all 0.3s;
+}
+
+.browser-window:hover {
+    border-color: #e94560;
+    box-shadow: 0 8px 40px rgba(233, 69, 96, 0.2);
+}
+
+.window-header {
+    background: linear-gradient(135deg, #16213e, #0f3460);
+    padding: 8px 12px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid #1a5276;
+}
+
+.window-dots {
+    display: flex;
+    gap: 6px;
+}
+
+.dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+}
+
+.dot-red { background: #ff5f57; }
+.dot-yellow { background: #febc2e; }
+.dot-green { background: #28c840; }
+
+.window-title {
+    font-size: 12px;
+    font-weight: 600;
+    color: #a0a0a0;
+}
+
+.window-actions {
+    display: flex;
+    gap: 5px;
+}
+
+.browser-content {
+    flex: 1;
+    background: #ffffff;
+    position: relative;
+    overflow: hidden;
+}
+
+.browser-content img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    image-rendering: -webkit-optimize-contrast;
+}
+
+/* Загрузка */
+.loading {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    text-align: center;
+    color: #a0a0a0;
+}
+
+.loading-spinner {
+    width: 40px;
+    height: 40px;
+    border: 4px solid #0f3460;
+    border-top: 4px solid #e94560;
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+    margin: 0 auto 10px;
+}
+
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+/* Статус бар */
+.status-bar {
+    background: linear-gradient(135deg, #1a1a2e, #16213e);
+    padding: 8px 20px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 12px;
+    color: #a0a0a0;
+    border-top: 2px solid #0f3460;
+}
+
+.status-info {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+}
+
+.status-version {
+    color: #e94560;
+    font-weight: 600;
+}
+
+/* Анимации */
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+}
+
+.loading p {
+    animation: pulse 1.5s infinite;
+}
+
+/* Адаптивность */
+@media (max-width: 1200px) {
+    .browsers-container {
+        flex-direction: column;
+    }
+    
+    .tools-bar {
+        gap: 10px;
+    }
+    
+    .btn {
+        padding: 6px 12px;
+        font-size: 11px;
+    }
+}
