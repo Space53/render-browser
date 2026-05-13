@@ -8,23 +8,21 @@
 </head>
 <body>
     <div id="app">
-        <!-- Верхняя панель -->
         <header class="top-bar">
             <h1>🌐 Live Browser Pro</h1>
             <span id="fpsCounter">⚡ -- FPS</span>
         </header>
         
-        <!-- Панель управления -->
         <div class="control-bar">
-            <button class="btn btn-primary" onclick="createNewWindow()">➕ Окно</button>
+            <button class="btn btn-primary" onclick="createPersistentWindow()">➕ Постоянное окно</button>
+            <button class="btn btn-warning" onclick="createAnonymousWindow()">👻 Анонимное окно</button>
             <button class="btn btn-success" onclick="startAllAutoScroll()">▶ Анти-кик ВСЕ</button>
             <button class="btn btn-danger" onclick="stopAllAutoScroll()">⏹ Стоп ВСЕ</button>
             <button class="btn btn-purple" onclick="refreshAll()">🔄 Обновить ВСЕ</button>
             <span id="windowsCount">Окна: 0</span>
-            <span class="hint">👆 Кликайте | Колесо=скролл | Двойной тап=ввод</span>
+            <span class="hint">👆 Клик | Колесо=скролл | ✏️ Кнопка "Текст"</span>
         </div>
         
-        <!-- Сетка браузеров -->
         <div class="browsers-grid" id="browsersGrid">
             <div class="loading-center">
                 <div class="spinner"></div>
@@ -32,9 +30,23 @@
             </div>
         </div>
         
-        <!-- Мобильная клавиатура -->
+        <!-- Редактор текста -->
+        <div id="textEditor" class="text-editor hidden">
+            <div class="text-editor-header">
+                <span>✏️ Редактирование текста</span>
+                <button onclick="hideTextEditor()">✕</button>
+            </div>
+            <textarea id="textArea" rows="4" placeholder="Введите текст... (пустое поле = удалить текст)"></textarea>
+            <div class="text-editor-actions">
+                <button class="btn btn-success" onclick="saveText()">💾 Сохранить (заменит текст)</button>
+                <button class="btn" onclick="hideTextEditor()">Отмена</button>
+            </div>
+            <p class="hint-text">💡 Текст полностью заменит существующий. Оставьте пустым чтобы удалить.</p>
+        </div>
+        
+        <!-- Мобильная клавиатура (упрощенная) -->
         <div id="mobileKeyboard" class="mobile-keyboard hidden">
-            <input type="text" id="mobileInput" placeholder="Введите текст..." autocomplete="off" />
+            <input type="text" id="mobileInput" placeholder="Текст для ввода..." autocomplete="off" />
             <button onclick="sendMobileText()">➤</button>
             <button onclick="hideKeyboard()">✕</button>
         </div>
