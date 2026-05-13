@@ -2,24 +2,21 @@
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Interactive Browser</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Live Browser</title>
     <link rel="stylesheet" href="styles.css">
-    <script src="/socket.io/socket.io.js"></script>
 </head>
 <body>
     <div id="app">
         <header class="top-bar">
-            <h1>🌐 Interactive Browser Pro</h1>
-            <div id="connectionStatus" class="status-badge">🔴 Подключение...</div>
+            <h1>🌐 Live Browser</h1>
+            <span id="fps">30 FPS</span>
         </header>
         
         <div class="control-bar">
             <button class="btn btn-primary" onclick="createNewWindow()">➕ Окно</button>
-            <button class="btn btn-success" onclick="startAllAutoScroll()">▶ Анти-кик</button>
-            <button class="btn btn-danger" onclick="stopAllAutoScroll()">⏹ Стоп</button>
             <span id="windowsCount">Окна: 0</span>
-            <span class="hint">💡 Кликайте, скролльте, вводите текст прямо на сайтах!</span>
+            <span class="hint">👆 Кликайте, скролльте, вводите текст прямо на сайтах!</span>
         </div>
         
         <div class="browsers-grid" id="browsersGrid">
@@ -29,21 +26,11 @@
             </div>
         </div>
         
-        <!-- Панель ввода текста (появляется при фокусе) -->
-        <div id="inputOverlay" class="input-overlay hidden">
-            <input type="text" id="textInput" placeholder="Введите текст и нажмите Enter..." />
-            <button onclick="sendText()">Отправить</button>
-            <button onclick="hideInput()">✕</button>
-        </div>
-        
-        <!-- Контекстное меню -->
-        <div id="contextMenu" class="context-menu hidden">
-            <div class="context-item" onclick="contextAction('navigate')">🔗 Перейти по URL...</div>
-            <div class="context-item" onclick="contextAction('refresh')">🔄 Обновить</div>
-            <div class="context-item" onclick="contextAction('back')">◀ Назад</div>
-            <div class="context-item" onclick="contextAction('forward')">▶ Вперед</div>
-            <div class="context-item" onclick="contextAction('scroll-top')">⬆ В начало</div>
-            <div class="context-item" onclick="contextAction('scroll-bottom')">⬇ В конец</div>
+        <!-- Клавиатура для телефона -->
+        <div id="mobileKeyboard" class="mobile-keyboard hidden">
+            <input type="text" id="mobileInput" placeholder="Введите текст..." autocomplete="off" />
+            <button onclick="sendMobileText()">➤</button>
+            <button onclick="hideMobileKeyboard()">✕</button>
         </div>
     </div>
     
