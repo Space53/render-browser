@@ -1,7 +1,7 @@
 {
-  "name": "live-browser-pro-x",
+  "name": "live-browser-pro",
   "version": "5.0.0",
-  "description": "High-FPS remote browser with WebSocket streaming, mobile-first UI, and live logs",
+  "description": "Multi-account remote browser with WebSocket streaming",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
