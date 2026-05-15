@@ -10,31 +10,42 @@ const server = http.createServer(app);
 app.use(express.static(path.join(__dirname, 'public')));
 app.use(express.json());
 
-// Хранилища
-const browsers = new Map();
-const frameBuffers = new Map();
-const clients = new Map();
-const autoScrolls = new Map();
-const persistentWindows = new Set(); // Постоянные окна
+// Хранилище аккаунтов
+const accounts = new Map();
 
-// ==================== MJPEG СТРИМИНГ ====================
-app.get('/stream/:windowId', (req, res) => {
-    const windowId = req.params.windowId;
-    
+function getAccount(accountId) {
+    if (!accounts.has(accountId)) {
+        accounts.set(accountId, {
+            browsers: new Map(),      // windowId -> { browser, page, url, autoScroll }
+            frameBuffers: new Map(),  // windowId -> Buffer
+            clients: new Map(),       // windowId -> Set<response>
+            autoScrolls: new Map(),   // windowId -> interval
+            createdAt: Date.now()
+        });
+        console.log(`🆕 Account created: ${accountId}`);
+    }
+    return accounts.get(accountId);
+}
+
+// MJPEG стриминг
+app.get('/stream/:accountId/:windowId', (req, res) => {
+    const { accountId, windowId } = req.params;
+    const account = getAccount(accountId);
+
     res.writeHead(200, {
         'Content-Type': 'multipart/x-mixed-replace; boundary=frame',
         'Cache-Control': 'no-cache, no-store, must-revalidate',
         'Connection': 'keep-alive',
-        'Pragma': 'no-cache',
-        'Expires': '0'
+        'Pragma': 'no-cache'
     });
-    
-    if (!clients.has(windowId)) {
-        clients.set(windowId, new Set());
+
+    if (!account.clients.has(windowId)) {
+        account.clients.set(windowId, new Set());
     }
-    clients.get(windowId).add(res);
-    
-    const buffer = frameBuffers.get(windowId);
+    account.clients.get(windowId).add(res);
+
+    // Отправить последний кадр сразу при подключении
+    const buffer = account.frameBuffers.get(windowId);
     if (buffer) {
         try {
             res.write(`--frame\r\nContent-Type: image/jpeg\r\nContent-Length: ${buffer.length}\r\n\r\n`);
@@ -42,14 +53,14 @@ app.get('/stream/:windowId', (req, res) => {
             res.write('\r\n');
         } catch(e) {}
     }
-    
+
     req.on('close', () => {
-        const cls = clients.get(windowId);
-        if (cls) cls.delete(res);
+        const clients = account.clients.get(windowId);
+        if (clients) clients.delete(res);
     });
 });
 
-// ==================== ЗАПУСК БРАУЗЕРА ====================
+// Запуск браузера с оптимизированными аргументами
 async function launchBrowser() {
     return await puppeteer.launch({
         args: [
@@ -59,9 +70,8 @@ async function launchBrowser() {
             '--disable-dev-shm-usage',
             '--disable-gpu',
             '--disable-web-security',
-            '--disable-features=IsolateOrigins',
-            '--disable-background-timer-throttling',
-            '--disable-renderer-backgrounding'
+            '--disable-features=IsolateOrigins,site-per-process',
+            '--disable-site-isolation-trials'
         ],
         defaultViewport: { width: 1280, height: 720 },
         executablePath: await chromium.executablePath(),
@@ -70,96 +80,99 @@ async function launchBrowser() {
     });
 }
 
-// ==================== СОЗДАНИЕ ОКНА ====================
-async function createWindow(windowId, url, isPersistent = true) {
+// Создание нового окна (страницы)
+async function createWindow(accountId, windowId, url) {
+    const account = getAccount(accountId);
+
     try {
-        if (browsers.has(windowId)) {
-            await browsers.get(windowId).browser.close().catch(() => {});
-            browsers.delete(windowId);
+        // Закрываем существующее окно с таким же ID, если есть
+        if (account.browsers.has(windowId)) {
+            const old = account.browsers.get(windowId);
+            await old.browser.close().catch(() => {});
+            account.browsers.delete(windowId);
         }
-        
+
         const browser = await launchBrowser();
         const page = await browser.newPage();
-        
+
+        // Маскировка WebDriver
         await page.evaluateOnNewDocument(() => {
             Object.defineProperty(navigator, 'webdriver', { get: () => false });
             window.chrome = { runtime: {} };
         });
-        
-        await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36');
+
+        await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
         await page.setViewport({ width: 1280, height: 720 });
         await page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
-        
-        browsers.set(windowId, { browser, page, url, autoScroll: false, isPersistent });
-        
-        if (isPersistent) {
-            persistentWindows.add(windowId);
-        }
-        
-        startFrameLoop(windowId, page);
-        
-        console.log(`✅ ${windowId} (${isPersistent ? 'persistent' : 'anonymous'}): ${url}`);
+
+        account.browsers.set(windowId, { browser, page, url, autoScroll: false });
+
+        startFrameLoop(accountId, windowId, page);
+
+        console.log(`✅ [${accountId}] ${windowId}: ${url}`);
         return true;
     } catch (error) {
-        console.error(`❌ ${windowId}:`, error.message);
+        console.error(`❌ [${accountId}] ${windowId}:`, error.message);
         return false;
     }
 }
 
-// ==================== ЗАХВАТ КАДРОВ ====================
-function startFrameLoop(windowId, page) {
+// Цикл захвата кадров с адаптивным интервалом (около 30 fps)
+function startFrameLoop(accountId, windowId, page) {
+    const account = getAccount(accountId);
     let capturing = false;
-    
+    const intervalMs = 33; // ~30 fps
+
     const capture = async () => {
-        if (!browsers.has(windowId)) return;
+        if (!account.browsers.has(windowId)) return;
         if (capturing) return;
-        
         capturing = true;
-        
+
         try {
-            const buffer = await page.screenshot({ 
-                type: 'jpeg', 
-                quality: 55,
+            const buffer = await page.screenshot({
+                type: 'jpeg',
+                quality: 45,
                 encoding: 'binary'
             });
-            
-            frameBuffers.set(windowId, buffer);
-            
-            const cls = clients.get(windowId);
-            if (cls && cls.size > 0) {
+
+            account.frameBuffers.set(windowId, buffer);
+
+            const clients = account.clients.get(windowId);
+            if (clients && clients.size > 0) {
                 const header = `--frame\r\nContent-Type: image/jpeg\r\nContent-Length: ${buffer.length}\r\n\r\n`;
-                
-                for (const client of cls) {
+
+                for (const client of clients) {
                     try {
                         client.write(header);
                         client.write(buffer);
                         client.write('\r\n');
                     } catch(e) {
-                        cls.delete(client);
+                        clients.delete(client);
                     }
                 }
             }
-        } catch(e) {}
-        
+        } catch(e) {
+            // Игнорируем ошибки скриншота (например, страница закрыта)
+        }
+
         capturing = false;
-        setTimeout(() => capture(), 50);
+        setTimeout(capture, intervalMs);
     };
-    
+
     capture();
 }
 
-// ==================== ВЗАИМОДЕЙСТВИЕ ====================
+// Эндпоинт взаимодействия
 app.post('/api/interact', async (req, res) => {
-    const { windowId, action, params } = req.body;
-    const data = browsers.get(windowId);
-    
-    if (!data) {
-        return res.json({ success: false, error: 'Window not found' });
-    }
-    
+    const { accountId, windowId, action, params } = req.body;
+    const account = getAccount(accountId);
+    const data = account.browsers.get(windowId);
+
+    if (!data) return res.json({ success: false, error: 'Window not found' });
+
     try {
         const page = data.page;
-        
+
         switch(action) {
             case 'click':
                 await page.mouse.click(params.x, params.y);
@@ -170,37 +183,18 @@ app.post('/api/interact', async (req, res) => {
             case 'scroll':
                 await page.evaluate(({ x, y }) => window.scrollBy(x, y), params);
                 break;
-            case 'scroll-up':
-                await page.evaluate(() => window.scrollBy(0, -300));
-                break;
-            case 'scroll-down':
-                await page.evaluate(() => window.scrollBy(0, 300));
-                break;
-            case 'scroll-top':
-                await page.evaluate(() => window.scrollTo(0, 0));
-                break;
-            case 'scroll-bottom':
-                await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
-                break;
             case 'type':
-                // Кликаем в нужное место для фокуса
+                // Кликаем для фокуса, затем вводим текст
                 await page.mouse.click(params.x, params.y);
                 await new Promise(r => setTimeout(r, 50));
-                
-                // Выделяем всё и удаляем (Ctrl+A, Delete)
                 await page.keyboard.down('Control');
                 await page.keyboard.press('KeyA');
                 await page.keyboard.up('Control');
                 await page.keyboard.press('Backspace');
                 await new Promise(r => setTimeout(r, 30));
-                
-                // Вводим новый текст
                 if (params.text) {
                     await page.keyboard.type(params.text, { delay: 20 });
                 }
-                break;
-            case 'keypress':
-                await page.keyboard.press(params.key);
                 break;
             case 'navigate':
                 await page.goto(params.url, { waitUntil: 'networkidle2', timeout: 30000 });
@@ -209,31 +203,41 @@ app.post('/api/interact', async (req, res) => {
             case 'refresh':
                 await page.reload({ waitUntil: 'networkidle2', timeout: 30000 });
                 break;
-            case 'back':
-                await page.goBack({ waitUntil: 'networkidle2' });
+            case 'goBack':
+                await page.goBack({ timeout: 10000 }).catch(() => {});
+                data.url = page.url();
                 break;
-            case 'forward':
-                await page.goForward({ waitUntil: 'networkidle2' });
+            case 'goForward':
+                await page.goForward({ timeout: 10000 }).catch(() => {});
+                data.url = page.url();
+                break;
+            case 'setViewport':
+                if (params.width && params.height) {
+                    await page.setViewport({ width: params.width, height: params.height });
+                }
+                break;
+            case 'zoom':
+                await page.evaluate(zoom => { document.body.style.zoom = zoom; }, params.zoom);
                 break;
         }
-        
+
         res.json({ success: true });
     } catch(error) {
         res.json({ success: false, error: error.message });
     }
 });
 
-// ==================== АВТОСКРОЛЛ ====================
+// Автоскролл (анти-кик)
 app.post('/api/autoscroll', async (req, res) => {
-    const { windowId, enabled } = req.body;
-    const data = browsers.get(windowId);
-    
+    const { accountId, windowId, enabled, interval = 3000 } = req.body;
+    const account = getAccount(accountId);
+    const data = account.browsers.get(windowId);
     if (!data) return res.json({ success: false });
-    
+
     if (enabled) {
-        if (autoScrolls.has(windowId)) clearInterval(autoScrolls.get(windowId));
-        
-        const interval = setInterval(async () => {
+        if (account.autoScrolls.has(windowId)) clearInterval(account.autoScrolls.get(windowId));
+
+        const timer = setInterval(async () => {
             try {
                 await data.page.evaluate(() => {
                     const h = document.documentElement.scrollHeight;
@@ -245,85 +249,131 @@ app.post('/api/autoscroll', async (req, res) => {
                     }
                 });
             } catch(e) {}
-        }, 3000);
-        
-        autoScrolls.set(windowId, interval);
+        }, interval);
+
+        account.autoScrolls.set(windowId, timer);
         data.autoScroll = true;
     } else {
-        if (autoScrolls.has(windowId)) {
-            clearInterval(autoScrolls.get(windowId));
-            autoScrolls.delete(windowId);
+        if (account.autoScrolls.has(windowId)) {
+            clearInterval(account.autoScrolls.get(windowId));
+            account.autoScrolls.delete(windowId);
         }
         data.autoScroll = false;
     }
-    
+
     res.json({ success: true, autoScroll: enabled });
 });
 
-// ==================== УПРАВЛЕНИЕ ОКНАМИ ====================
+// Управление окнами
 app.post('/api/create-window', async (req, res) => {
-    const { windowId, url, persistent } = req.body;
-    const isPersistent = persistent !== false;
-    const success = await createWindow(windowId, url, isPersistent);
-    res.json({ success, windowId, url, persistent: isPersistent });
+    const { accountId, windowId, url } = req.body;
+    const success = await createWindow(accountId, windowId, url);
+    res.json({ success, windowId, url });
 });
 
 app.post('/api/close-window', async (req, res) => {
-    const { windowId } = req.body;
-    
-    if (autoScrolls.has(windowId)) {
-        clearInterval(autoScrolls.get(windowId));
-        autoScrolls.delete(windowId);
+    const { accountId, windowId } = req.body;
+    const account = getAccount(accountId);
+
+    if (account.autoScrolls.has(windowId)) {
+        clearInterval(account.autoScrolls.get(windowId));
+        account.autoScrolls.delete(windowId);
     }
-    
-    const data = browsers.get(windowId);
+
+    const data = account.browsers.get(windowId);
     if (data) {
         await data.browser.close().catch(() => {});
-        browsers.delete(windowId);
+        account.browsers.delete(windowId);
     }
-    
-    persistentWindows.delete(windowId);
+
     res.json({ success: true });
 });
 
-app.get('/api/status', (req, res) => {
-    const windows = [];
-    for (const [id, data] of browsers) {
-        windows.push({ 
-            windowId: id, 
-            url: data.url,
-            autoScroll: data.autoScroll || false,
-            persistent: persistentWindows.has(id)
-        });
+app.post('/api/rename-window', (req, res) => {
+    const { accountId, windowId, title } = req.body;
+    const account = getAccount(accountId);
+    const data = account.browsers.get(windowId);
+    if (data) {
+        data.customTitle = title;
+        res.json({ success: true });
+    } else {
+        res.json({ success: false, error: 'Not found' });
     }
-    res.json({ windows });
 });
 
-// ==================== ЗАПУСК ====================
-const PORT = process.env.PORT || 3000;
+app.get('/api/screenshot/:accountId/:windowId', async (req, res) => {
+    const { accountId, windowId } = req.params;
+    const account = getAccount(accountId);
+    const data = account.browsers.get(windowId);
+    if (!data) return res.status(404).send('Not found');
 
-server.listen(PORT, async () => {
-    console.log(`🚀 Server: ${PORT}`);
-    
-    // Постоянные окна
-    const defaults = [
-        { id: 'main1', url: 'https://example.com', persistent: true },
-        { id: 'main2', url: 'https://google.com', persistent: true },
-        { id: 'main3', url: 'https://github.com', persistent: true }
-    ];
-    
-    for (const win of defaults) {
-        await createWindow(win.id, win.url, win.persistent);
-        await new Promise(r => setTimeout(r, 2000));
+    try {
+        const buffer = await data.page.screenshot({ type: 'png' });
+        res.writeHead(200, {
+            'Content-Type': 'image/png',
+            'Content-Disposition': `attachment; filename="screenshot-${windowId}.png"`
+        });
+        res.end(buffer);
+    } catch(e) {
+        res.status(500).send('Screenshot failed');
     }
-    
-    console.log('✅ Ready');
+});
+
+app.get('/api/status/:accountId', (req, res) => {
+    const { accountId } = req.params;
+    const account = getAccount(accountId);
+
+    const windows = [];
+    for (const [id, data] of account.browsers) {
+        windows.push({
+            windowId: id,
+            url: data.url,
+            autoScroll: data.autoScroll || false,
+            title: data.customTitle || id
+        });
+    }
+    res.json({ accountId, windows });
+});
+
+app.post('/api/init-account', async (req, res) => {
+    const { accountId } = req.body;
+    const account = getAccount(accountId);
+
+    // Если окон нет, создаём три окна по умолчанию
+    if (account.browsers.size === 0) {
+        const defaults = [
+            { id: 'main1', url: 'https://example.com' },
+            { id: 'main2', url: 'https://google.com' },
+            { id: 'main3', url: 'https://github.com' }
+        ];
+
+        for (const win of defaults) {
+            await createWindow(accountId, win.id, win.url);
+            await new Promise(r => setTimeout(r, 1500));
+        }
+    }
+
+    const windows = [];
+    for (const [id, data] of account.browsers) {
+        windows.push({ windowId: id, url: data.url, autoScroll: data.autoScroll, title: data.customTitle || id });
+    }
+
+    res.json({ success: true, accountId, windows });
+});
+
+const PORT = process.env.PORT || 3000;
+server.listen(PORT, () => {
+    console.log(`🚀 Live Browser Pro running on port ${PORT}`);
+    console.log('👥 Multi-account system active (accounts never deleted)');
 });
 
 process.on('SIGTERM', async () => {
-    for (const [id, interval] of autoScrolls) clearInterval(interval);
-    for (const [id, data] of browsers) {
-        await data.browser.close().catch(() => {});
+    console.log('🧹 Shutting down gracefully...');
+    for (const [accountId, account] of accounts) {
+        for (const [id, interval] of account.autoScrolls) clearInterval(interval);
+        for (const [id, data] of account.browsers) {
+            await data.browser.close().catch(() => {});
+        }
     }
     server.close();
     process.exit(0);
