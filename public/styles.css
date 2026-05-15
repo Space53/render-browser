@@ -3,114 +3,52 @@
     --bg2: #12122a;
     --bg3: #1a1a3a;
     --accent: #6c5ce7;
-    --accent-hover: #5a4bd1;
+    --accent2: #a29bfe;
     --green: #00b894;
     --red: #e94560;
-    --purple: #a29bfe;
-    --warning: #fdcb6e;
     --text: #e0e0e0;
     --muted: #8888aa;
     --border: #2a2a4a;
-    --radius: 10px;
+    --radius: 12px;
 }
-
 * { margin: 0; padding: 0; box-sizing: border-box; }
-
 body {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
     background: var(--bg);
     color: var(--text);
-    height: 100vh;
+    height: 100dvh;
     overflow: hidden;
     touch-action: manipulation;
     user-select: none;
-    -webkit-user-select: none;
 }
-
-#app {
-    display: flex;
-    flex-direction: column;
-    height: 100vh;
-    max-height: 100dvh;
-}
+#app { display: flex; flex-direction: column; height: 100%; }
 
 /* Верхняя панель */
 .top-bar {
-    padding: 10px 15px;
     background: var(--bg2);
     border-bottom: 1px solid var(--border);
+    padding: 8px 12px;
     display: flex;
     align-items: center;
     gap: 10px;
-    flex-wrap: wrap;
+    z-index: 10;
 }
-.top-left, .top-right {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-}
-.top-center {
-    flex: 1;
-    min-width: 200px;
-}
-.url-bar {
-    display: flex;
-    background: var(--bg3);
-    border-radius: 20px;
-    overflow: hidden;
-    border: 1px solid var(--border);
-}
-.url-bar input {
-    flex: 1;
-    padding: 8px 15px;
-    border: none;
-    background: transparent;
-    color: var(--text);
-    font-size: 14px;
-    outline: none;
-}
-.url-bar button {
-    background: var(--accent);
-    border: none;
-    color: white;
-    padding: 8px 15px;
-    font-size: 16px;
-    cursor: pointer;
-}
-.url-bar button:hover { background: var(--accent-hover); }
-
-.icon-btn {
-    background: var(--bg3);
-    border: none;
-    color: var(--text);
-    font-size: 18px;
-    width: 36px;
-    height: 36px;
-    border-radius: 50%;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    cursor: pointer;
-    transition: background 0.2s;
-}
-.icon-btn:hover { background: var(--accent); color: white; }
-.icon-btn:active { transform: scale(0.95); }
-
-.badge {
+.top-bar h1 { font-size: 1.1rem; white-space: nowrap; }
+.spacer { flex: 1; }
+.badge.fps {
     background: var(--green);
-    padding: 4px 10px;
-    border-radius: 12px;
-    font-size: 12px;
-    font-weight: 700;
+    padding: 3px 10px;
+    border-radius: 10px;
+    font-weight: bold;
     font-family: monospace;
-    white-space: nowrap;
+    font-size: 0.8rem;
 }
 .account-badge {
     background: var(--accent);
     padding: 5px 12px;
     border-radius: 15px;
-    font-size: 13px;
     cursor: pointer;
+    font-size: 0.85rem;
 }
 
 /* Боковая панель */
@@ -121,56 +59,31 @@ body {
     height: 100%;
     background: var(--bg2);
     border-right: 1px solid var(--border);
-    z-index: 100;
-    overflow-y: auto;
+    z-index: 50;
     padding: 20px;
+    overflow-y: auto;
     transform: translateX(-100%);
     transition: transform 0.3s ease;
 }
 .sidebar.visible { transform: translateX(0); }
-.sidebar-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 20px;
-}
+.sidebar-header { display: flex; justify-content: space-between; margin-bottom: 20px; }
 .sidebar-section { margin-bottom: 25px; }
-.sidebar-section h3 { font-size: 14px; margin-bottom: 10px; color: var(--purple); }
-.list { display: flex; flex-direction: column; gap: 6px; }
+.sidebar-section h3 { font-size: 0.9rem; color: var(--accent2); margin-bottom: 8px; }
+.list { display: flex; flex-direction: column; gap: 5px; }
 .list-item {
-    padding: 8px 12px;
     background: var(--bg3);
     border-radius: 6px;
-    cursor: pointer;
-    font-size: 13px;
+    padding: 8px 12px;
     display: flex;
-    justify-content: space-between;
     align-items: center;
+    gap: 5px;
+    cursor: pointer;
     transition: background 0.2s;
 }
 .list-item:hover { background: var(--accent); }
 .list-item .title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.list-item .actions { display: flex; gap: 4px; }
 
-.btn {
-    padding: 8px 16px;
-    border: none;
-    border-radius: 6px;
-    cursor: pointer;
-    font-weight: 600;
-    font-size: 13px;
-    color: white;
-    background: var(--bg3);
-    transition: background 0.2s, transform 0.1s;
-}
-.btn:active { transform: scale(0.96); }
-.btn-primary { background: var(--accent); }
-.btn-success { background: var(--green); }
-.btn-danger { background: var(--red); }
-.btn-purple { background: var(--purple); }
-.full-width { width: 100%; }
-
-/* Сетка браузеров */
+/* Основная сетка */
 .browsers-grid {
     flex: 1;
     display: grid;
@@ -190,10 +103,14 @@ body {
     border: 1px solid var(--border);
     display: flex;
     flex-direction: column;
-    min-height: 200px;
     position: relative;
+    transition: transform 0.2s, opacity 0.3s;
 }
-.browser-card.hidden-card { display: none; }
+.browser-card.hidden-card {
+    opacity: 0.3;
+    pointer-events: none;
+}
+.browser-card.active { border-color: var(--accent); box-shadow: 0 0 10px var(--accent); }
 .browser-card-header {
     padding: 5px 10px;
     background: var(--bg3);
@@ -202,52 +119,71 @@ body {
     align-items: center;
     flex-wrap: wrap;
     gap: 4px;
-    z-index: 10;
+    z-index: 5;
 }
-.browser-title { font-size: 11px; font-weight: 600; }
-.browser-url {
-    font-size: 9px;
-    color: var(--muted);
-    max-width: 120px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
+.browser-title { font-size: 0.75rem; font-weight: 600; }
+.browser-url { font-size: 0.65rem; color: var(--muted); max-width: 100px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .browser-actions { display: flex; gap: 3px; }
 .browser-stream {
     flex: 1;
     position: relative;
     overflow: hidden;
     cursor: crosshair;
-    background: #fff;
+    background: #000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
 }
-.browser-stream img {
-    width: 100%;
-    height: 100%;
+.browser-stream canvas {
+    max-width: 100%;
+    max-height: 100%;
     object-fit: contain;
-    pointer-events: none;
 }
 .interaction-layer {
     position: absolute;
-    top: 0; left: 0;
-    width: 100%; height: 100%;
-    z-index: 5;
-}
-.active-window {
-    box-shadow: 0 0 15px var(--accent);
-    border-color: var(--accent);
+    top: 0; left: 0; right: 0; bottom: 0;
+    z-index: 2;
 }
 
 /* Панель инструментов */
 .toolbar {
-    display: flex;
-    gap: 8px;
-    padding: 8px 10px;
     background: var(--bg2);
     border-top: 1px solid var(--border);
+    padding: 6px 10px;
+    display: flex;
+    gap: 8px;
     justify-content: center;
     flex-wrap: wrap;
 }
+
+/* Кнопки */
+.icon-btn {
+    background: var(--bg3);
+    border: none;
+    color: var(--text);
+    font-size: 1.2rem;
+    width: 38px;
+    height: 38px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: background 0.2s;
+}
+.icon-btn:hover { background: var(--accent); color: white; }
+.btn {
+    padding: 8px 16px;
+    border: none;
+    border-radius: 6px;
+    background: var(--bg3);
+    color: white;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.2s;
+}
+.btn.primary { background: var(--accent); }
+.full-width { width: 100%; }
 
 /* Модальные окна */
 .modal {
@@ -257,7 +193,7 @@ body {
     display: flex;
     align-items: center;
     justify-content: center;
-    z-index: 1000;
+    z-index: 100;
 }
 .modal.hidden { display: none; }
 .modal-content {
@@ -265,32 +201,63 @@ body {
     border-radius: 12px;
     padding: 20px;
     width: 90%;
-    max-width: 400px;
-    box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+    max-width: 420px;
+    max-height: 80vh;
+    overflow-y: auto;
 }
-.modal-content h3 { margin-bottom: 15px; }
-.modal-actions { display: flex; gap: 10px; margin-top: 15px; justify-content: flex-end; }
-textarea {
-    width: 100%;
+.modal-content.wide { max-width: 600px; }
+.modal-content label { display: block; margin-bottom: 8px; }
+input[type="number"] {
+    padding: 8px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--text);
+    border-radius: 6px;
+    width: 80px;
+    margin-left: 10px;
+}
+.hint { font-size: 0.8rem; color: var(--muted); margin-top: 8px; }
+.log-container {
+    background: #000;
+    color: #0f0;
+    font-family: monospace;
+    padding: 10px;
+    border-radius: 6px;
+    max-height: 400px;
+    overflow-y: auto;
+    margin: 10px 0;
+    font-size: 0.75rem;
+    white-space: pre-wrap;
+}
+
+/* Мобильная клавиатура */
+.mobile-keyboard {
+    position: fixed;
+    bottom: 0; left: 0; right: 0;
+    background: var(--bg2);
+    padding: 10px;
+    display: flex;
+    gap: 8px;
+    z-index: 200;
+    border-top: 2px solid var(--accent);
+}
+.mobile-keyboard input {
+    flex: 1;
     padding: 12px;
     background: var(--bg);
     border: 1px solid var(--border);
+    color: var(--text);
     border-radius: 8px;
-    color: var(--text);
-    resize: vertical;
-    font-family: inherit;
-    font-size: 14px;
+    font-size: 1rem;
 }
-input[type="number"], input[type="text"] {
-    padding: 8px 12px;
-    background: var(--bg);
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    color: var(--text);
-    font-size: 14px;
-    width: 100px;
+.mobile-keyboard button {
+    padding: 10px 16px;
+    background: var(--accent);
+    border: none;
+    color: white;
+    font-size: 1.2rem;
+    border-radius: 8px;
 }
-.hint { font-size: 12px; color: var(--muted); margin-top: 5px; }
 
 /* Индикатор касания */
 .touch-indicator {
@@ -300,51 +267,14 @@ input[type="number"], input[type="text"] {
     border-radius: 50%;
     pointer-events: none;
     animation: pulse 0.3s ease-out forwards;
-    z-index: 100;
+    z-index: 300;
 }
 @keyframes pulse {
     0% { transform: scale(0); opacity: 1; }
     100% { transform: scale(2.5); opacity: 0; }
 }
 
-/* Мобильная клавиатура */
-.mobile-keyboard {
-    position: fixed;
-    bottom: 0; left: 0; right: 0;
-    background: var(--bg2);
-    padding: 12px;
-    display: flex;
-    gap: 8px;
-    z-index: 999;
-    border-top: 2px solid var(--accent);
-}
-.mobile-keyboard input {
-    flex: 1;
-    padding: 12px;
-    background: var(--bg);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    color: var(--text);
-    font-size: 16px;
-}
-.mobile-keyboard button {
-    padding: 10px 18px;
-    background: var(--accent);
-    border: none;
-    border-radius: 8px;
-    color: white;
-    font-size: 18px;
-    cursor: pointer;
-}
-
-.hidden { display: none !important; }
-.loading-center {
-    position: absolute;
-    top: 50%; left: 50%;
-    transform: translate(-50%, -50%);
-    text-align: center;
-    color: var(--muted);
-}
+.loading-center { text-align: center; color: var(--muted); padding: 40px; }
 .spinner {
     width: 40px; height: 40px;
     border: 3px solid var(--border);
@@ -355,8 +285,7 @@ input[type="number"], input[type="text"] {
 }
 @keyframes spin { to { transform: rotate(360deg); } }
 
-@media (max-width: 768px) {
-    .top-center { order: 3; width: 100%; }
+@media (max-width: 600px) {
     .browsers-grid { grid-template-columns: 1fr !important; }
-    .toolbar { gap: 4px; }
-}
+    .top-bar h1 { font-size: 0.9rem; }
+    }
