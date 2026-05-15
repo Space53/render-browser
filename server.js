@@ -2,7 +2,6 @@ const express = require('express');
 const http = require('http');
 const WebSocket = require('ws');
 const path = require('path');
-const fs = require('fs');
 const puppeteer = require('puppeteer-core');
 const chromium = require('@sparticuz/chromium');
 
@@ -13,121 +12,157 @@ const wss = new WebSocket.Server({ server });
 app.use(express.static(path.join(__dirname, 'public')));
 app.use(express.json());
 
-// Постоянное хранилище логов в файл
-const LOG_FILE = path.join(__dirname, 'logs.json');
-let logBuffer = [];
-const MAX_LOGS = 1000;
+// ===== КОНФИГУРАЦИЯ =====
+const MAX_ACCOUNTS = 2;
+const MAX_WINDOWS_PER_ACCOUNT = 3;
 
-// Загружаем старые логи при старте
-try {
-    if (fs.existsSync(LOG_FILE)) {
-        const data = fs.readFileSync(LOG_FILE, 'utf8');
-        logBuffer = JSON.parse(data);
-        console.log(`📋 Loaded ${logBuffer.length} old logs`);
-    }
-} catch(e) {}
-
-function saveLogs() {
-    try {
-        fs.writeFileSync(LOG_FILE, JSON.stringify(logBuffer.slice(-500), null, 2));
-    } catch(e) {}
-}
-
-function addLog(level, message, data = null) {
-    const entry = {
-        timestamp: Date.now(),
-        iso: new Date().toISOString(),
-        level,
-        message,
-        data: data ? JSON.stringify(data).substring(0, 500) : null
-    };
-    logBuffer.push(entry);
-    if (logBuffer.length > MAX_LOGS) logBuffer.shift();
-    
-    // Сохраняем каждые 10 записей
-    if (logBuffer.length % 10 === 0) saveLogs();
-    
-    const colors = { error: '\x1b[31m', warn: '\x1b[33m', info: '\x1b[36m', success: '\x1b[32m', fps: '\x1b[35m', perf: '\x1b[32m' };
-    const color = colors[level] || '\x1b[0m';
-    console.log(`${color}[${entry.iso}] ${level.toUpperCase()}: ${message}\x1b[0m`, data || '');
-}
-
-// Сохраняем логи при выходе
-process.on('SIGTERM', () => {
-    saveLogs();
-    console.log('📋 Logs saved to file');
-});
-
+// ===== ХРАНИЛИЩЕ =====
 const accounts = new Map();
+const logs = [];
+const MAX_LOGS = 500;
+
+function addLog(level, msg, data) {
+    const entry = {
+        time: new Date().toISOString(),
+        level,
+        msg,
+        data: data ? JSON.stringify(data).substring(0, 200) : ''
+    };
+    logs.push(entry);
+    if (logs.length > MAX_LOGS) logs.shift();
+    console.log(`[${entry.time}] ${level.toUpperCase()}: ${msg}`);
+}
 
 function getAccount(accountId) {
     if (!accounts.has(accountId)) {
+        if (accounts.size >= MAX_ACCOUNTS) {
+            // Удаляем самый старый аккаунт
+            const oldest = [...accounts.entries()].sort((a, b) => a[1].createdAt - b[1].createdAt)[0];
+            if (oldest) {
+                closeAccount(oldest[0]);
+                accounts.delete(oldest[0]);
+                addLog('info', `Removed old account: ${oldest[0]}`);
+            }
+        }
+        
         accounts.set(accountId, {
-            browsers: new Map(),
-            clients: new Map(),
+            browser: null,
+            windows: new Map(), // windowId -> { page, url, autoScroll }
+            clients: new Map(), // windowId -> Set<ws>
+            lastFrames: new Map(), // windowId -> Buffer
             autoScrolls: new Map(),
-            hiddenWindows: new Set(),
-            fpsStats: new Map(), // windowId -> { timestamps: [], qualities: [], fps: [] }
             createdAt: Date.now()
         });
-        addLog('info', `✅ Account ${accountId} created`);
+        addLog('info', `Account created: ${accountId}`);
     }
     return accounts.get(accountId);
 }
 
-// WebSocket обработка
+function closeAccount(accountId) {
+    const acc = accounts.get(accountId);
+    if (!acc) return;
+    
+    for (const [id, timer] of acc.autoScrolls) clearInterval(timer);
+    for (const [id, win] of acc.windows) {
+        win.page.close().catch(() => {});
+    }
+    acc.browser?.close().catch(() => {});
+    addLog('info', `Account closed: ${accountId}`);
+}
+
+// ===== WebSocket =====
 wss.on('connection', (ws, req) => {
-    const url = new URL(req.url, `http://${req.headers.host}`);
-    const accountId = url.searchParams.get('accountId');
+    const url = new URL(req.url, 'http://localhost');
+    const accountId = url.searchParams.get('accountId') || '0';
     const windowId = url.searchParams.get('windowId');
     
-    if (!accountId || !windowId) { ws.close(); return; }
+    if (!windowId) { ws.close(); return; }
     
-    const account = getAccount(accountId);
-    if (!account.clients.has(windowId)) account.clients.set(windowId, new Set());
-    account.clients.get(windowId).add(ws);
+    const acc = getAccount(accountId);
     
-    ws.isAlive = true;
-    ws.on('pong', () => { ws.isAlive = true; });
+    if (!acc.clients.has(windowId)) acc.clients.set(windowId, new Set());
+    acc.clients.get(windowId).add(ws);
     
-    addLog('info', `🔌 WS: ${accountId}/${windowId} (${account.clients.get(windowId).size} viewers)`);
+    addLog('info', `WS connect: ${accountId}/${windowId} (${acc.clients.get(windowId).size} viewers)`);
     
-    const windowData = account.browsers.get(windowId);
-    if (windowData?.lastFrame && ws.readyState === WebSocket.OPEN) {
-        try { ws.send(windowData.lastFrame, { binary: true }); } catch(e) {}
+    // Сразу отправляем последний кадр
+    const frame = acc.lastFrames.get(windowId);
+    if (frame && ws.readyState === WebSocket.OPEN) {
+        ws.send(frame, { binary: true });
     }
     
     ws.on('message', async (data) => {
         try {
-            const msg = JSON.parse(data.toString());
-            if (msg.type === 'interact' && windowData?.page) {
-                await handleInteraction(windowData, msg.action, msg.params);
+            const msg = JSON.parse(data);
+            const win = acc.windows.get(windowId);
+            if (!win || !win.page) return;
+            
+            const { page } = win;
+            
+            switch(msg.action) {
+                case 'click':
+                    await page.mouse.click(msg.x, msg.y);
+                    break;
+                case 'scroll':
+                    await page.evaluate((y) => window.scrollBy(0, y), msg.y || 300);
+                    break;
+                case 'type':
+                    await page.mouse.click(msg.x, msg.y);
+                    await new Promise(r => setTimeout(r, 100));
+                    await page.evaluate((text) => {
+                        const el = document.activeElement;
+                        if (el) {
+                            if (el.isContentEditable) el.textContent = text;
+                            else el.value = text;
+                            el.dispatchEvent(new Event('input', { bubbles: true }));
+                        }
+                    }, msg.text || '');
+                    addLog('info', `Text sent: ${msg.text?.substring(0, 30)}`);
+                    break;
+                case 'navigate':
+                    try {
+                        await page.goto(msg.url, { waitUntil: 'domcontentloaded', timeout: 8000 });
+                        win.url = msg.url;
+                    } catch(e) {
+                        addLog('warn', `Navigation timeout: ${msg.url}`);
+                    }
+                    break;
+                case 'refresh':
+                    try { await page.reload({ waitUntil: 'domcontentloaded', timeout: 8000 }); } catch(e) {}
+                    break;
+                case 'goBack':
+                    try { await page.goBack({ timeout: 5000 }); win.url = page.url(); } catch(e) {}
+                    break;
+                case 'goForward':
+                    try { await page.goForward({ timeout: 5000 }); win.url = page.url(); } catch(e) {}
+                    break;
+                case 'key':
+                    await page.keyboard.press(msg.key);
+                    break;
             }
         } catch(e) {
-            addLog('error', `WS message error: ${e.message}`);
+            // Игнорируем ошибки взаимодействия
         }
     });
     
     ws.on('close', () => {
-        const clients = account.clients.get(windowId);
-        if (clients) clients.delete(ws);
-        addLog('info', `🔌 WS closed: ${accountId}/${windowId} (${clients?.size || 0} left)`);
+        const cl = acc.clients.get(windowId);
+        if (cl) {
+            cl.delete(ws);
+            addLog('info', `WS disconnect: ${accountId}/${windowId} (${cl.size} left)`);
+        }
     });
 });
 
-setInterval(() => {
-    wss.clients.forEach(ws => {
-        if (ws.isAlive === false) return ws.terminate();
-        ws.isAlive = false;
-        ws.ping();
-    });
-}, 30000);
-
-async function launchBrowser() {
-    addLog('info', '🌐 Launching Chromium...');
-    const startTime = Date.now();
+// ===== Запуск браузера для аккаунта =====
+async function getBrowser(accountId) {
+    const acc = getAccount(accountId);
     
-    const browser = await puppeteer.launch({
+    if (acc.browser?.isConnected()) return acc.browser;
+    
+    addLog('info', `Launching browser for account: ${accountId}`);
+    
+    acc.browser = await puppeteer.launch({
         args: [
             ...chromium.args,
             '--no-sandbox',
@@ -135,7 +170,8 @@ async function launchBrowser() {
             '--disable-dev-shm-usage',
             '--disable-gpu',
             '--single-process',
-            '--disable-features=IsolateOrigins',
+            '--no-zygote',
+            '--disable-features=IsolateOrigins,site-per-process',
             '--disable-background-timer-throttling',
             '--disable-renderer-backgrounding'
         ],
@@ -145,383 +181,123 @@ async function launchBrowser() {
         ignoreHTTPSErrors: true
     });
     
-    const launchTime = Date.now() - startTime;
-    addLog('perf', `⏱️ Browser launched in ${launchTime}ms`);
-    return browser;
+    acc.browser.on('disconnected', () => {
+        addLog('warn', `Browser disconnected for account: ${accountId}`);
+        acc.browser = null;
+    });
+    
+    return acc.browser;
 }
 
+// ===== Создание окна =====
 async function createWindow(accountId, windowId, url) {
-    const account = getAccount(accountId);
-    addLog('info', `🆕 Creating window ${accountId}/${windowId} → ${url}`);
-    const startTime = Date.now();
+    const acc = getAccount(accountId);
+    
+    // Проверяем лимит
+    if (acc.windows.size >= MAX_WINDOWS_PER_ACCOUNT) {
+        addLog('warn', `Max windows (${MAX_WINDOWS_PER_ACCOUNT}) reached for account: ${accountId}`);
+        return false;
+    }
+    
+    // Закрываем существующее окно с таким же ID
+    if (acc.windows.has(windowId)) {
+        const old = acc.windows.get(windowId);
+        await old.page.close().catch(() => {});
+        acc.windows.delete(windowId);
+        clearInterval(acc.autoScrolls.get(windowId));
+        acc.autoScrolls.delete(windowId);
+    }
     
     try {
-        if (account.browsers.has(windowId)) {
-            const old = account.browsers.get(windowId);
-            await old.browser.close().catch(() => {});
-            account.browsers.delete(windowId);
-        }
-        
-        const browser = await launchBrowser();
+        const browser = await getBrowser(accountId);
         const page = await browser.newPage();
-        
-        // Отслеживаем загрузку страницы для FPS анализа
-        page.on('domcontentloaded', () => {
-            addLog('perf', `📄 DOM ready: ${windowId}`);
-        });
-        
-        page.on('load', () => {
-            addLog('perf', `✅ Page loaded: ${windowId}`);
-        });
-        
-        await page.evaluateOnNewDocument(() => {
-            Object.defineProperty(navigator, 'webdriver', { get: () => false });
-            window.chrome = { runtime: {} };
-        });
         
         await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0');
         await page.setViewport({ width: 1280, height: 720 });
         
-        // Пробуем загрузить с таймаутом
-        const navStart = Date.now();
         try {
-            await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 10000 });
-            const navTime = Date.now() - navStart;
-            addLog('perf', `⏱️ Navigation: ${navTime}ms to ${url}`);
+            await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 8000 });
         } catch(e) {
-            addLog('warn', `⚠️ Navigation timeout for ${url}, loading blank`);
-            await page.goto('about:blank').catch(() => {});
+            addLog('warn', `Navigation timeout: ${url}`);
         }
         
-        const windowData = { 
-            browser, 
-            page, 
-            url, 
-            autoScroll: false, 
-            customTitle: null, 
-            lastFrame: null,
-            quality: 40, // Начальное качество JPEG
-            lastFpsLog: Date.now(),
-            frameCount: 0,
-            navigating: false // Флаг навигации для избежания ошибок
-        };
+        acc.windows.set(windowId, { page, url, autoScroll: false });
         
-        account.browsers.set(windowId, windowData);
-        startFrameCapture(accountId, windowId, page);
+        // Запускаем захват кадров
+        startCapture(accountId, windowId, page);
         
-        const totalTime = Date.now() - startTime;
-        addLog('success', `✅ Window created in ${totalTime}ms: ${accountId}/${windowId}`);
+        addLog('success', `Window created: ${accountId}/${windowId} -> ${url}`);
         return true;
-    } catch(error) {
-        addLog('error', `❌ Failed: ${accountId}/${windowId}`, { error: error.message });
+    } catch(e) {
+        addLog('error', `Failed to create window: ${e.message}`);
         return false;
     }
 }
 
-// Оптимизированный захват кадров с анализом FPS
-function startFrameCapture(accountId, windowId, page) {
-    const account = getAccount(accountId);
+// ===== Захват кадров =====
+function startCapture(accountId, windowId, page) {
+    const acc = getAccount(accountId);
     let capturing = false;
     
-    // Инициализируем статистику
-    if (!account.fpsStats.has(windowId)) {
-        account.fpsStats.set(windowId, {
-            timestamps: [],
-            fps: [],
-            qualities: [],
-            domSizes: []
-        });
-    }
-    const stats = account.fpsStats.get(windowId);
-    
     const capture = async () => {
-        const windowData = account.browsers.get(windowId);
-        if (!windowData || capturing) {
-            setTimeout(() => capture(), 16);
+        if (!acc.windows.has(windowId) || capturing) {
+            setTimeout(capture, 50);
             return;
         }
         
         capturing = true;
-        const captureStart = Date.now();
         
         try {
-            // Адаптивное качество на основе нагрузки
-            const currentQuality = windowData.quality;
-            
-            // Измеряем размер DOM (влияет на скорость скриншота)
-            let domSize = 0;
-            try {
-                domSize = await page.evaluate(() => document.documentElement.innerHTML.length);
-            } catch(e) {}
-            
-            // Скриншот
-            const buffer = await page.screenshot({ 
-                type: 'jpeg', 
-                quality: currentQuality,
+            const buffer = await page.screenshot({
+                type: 'jpeg',
+                quality: 25,
                 encoding: 'binary'
             });
             
-            const captureTime = Date.now() - captureStart;
+            acc.lastFrames.set(windowId, buffer);
             
-            windowData.lastFrame = buffer;
-            windowData.frameCount++;
-            
-            // Отправка клиентам
-            const clients = account.clients.get(windowId);
-            if (clients && clients.size > 0) {
-                for (const ws of clients) {
+            // Отправка всем клиентам
+            const cl = acc.clients.get(windowId);
+            if (cl && cl.size > 0) {
+                for (const ws of cl) {
                     if (ws.readyState === WebSocket.OPEN) {
-                        try { 
-                            ws.send(buffer, { binary: true }); 
-                        } catch(e) { 
-                            clients.delete(ws); 
-                        }
+                        try { ws.send(buffer, { binary: true }); } catch(e) { cl.delete(ws); }
                     }
                 }
             }
-            
-            // Анализ FPS каждые 3 секунды
-            const now = Date.now();
-            if (now - windowData.lastFpsLog > 3000) {
-                const elapsed = (now - windowData.lastFpsLog) / 1000;
-                const currentFps = Math.round(windowData.frameCount / elapsed);
-                windowData.frameCount = 0;
-                windowData.lastFpsLog = now;
-                
-                // Сохраняем статистику
-                stats.timestamps.push(now);
-                stats.fps.push(currentFps);
-                stats.qualities.push(currentQuality);
-                stats.domSizes.push(domSize);
-                
-                // Ограничиваем размер статистики
-                if (stats.timestamps.length > 100) {
-                    stats.timestamps.shift();
-                    stats.fps.shift();
-                    stats.qualities.shift();
-                    stats.domSizes.shift();
-                }
-                
-                // Логируем FPS с анализом
-                const avgFps = stats.fps.length > 3 ? 
-                    Math.round(stats.fps.slice(-5).reduce((a,b) => a+b, 0) / Math.min(5, stats.fps.length)) : 
-                    currentFps;
-                
-                const viewers = clients?.size || 0;
-                const domKB = Math.round(domSize / 1024);
-                
-                addLog('fps', `📊 ${windowId}: ${currentFps} FPS | avg: ${avgFps} | q: ${currentQuality}% | DOM: ${domKB}KB | 👥 ${viewers} | time: ${captureTime}ms`);
-                
-                // Авто-оптимизация качества
-                if (currentFps < 5 && currentQuality > 20) {
-                    windowData.quality = Math.max(15, currentQuality - 5);
-                    addLog('perf', `🔧 Lowered quality to ${windowData.quality}% for ${windowId} (low FPS: ${currentFps})`);
-                } else if (currentFps > 40 && currentQuality < 60) {
-                    windowData.quality = Math.min(60, currentQuality + 5);
-                    addLog('perf', `🔧 Increased quality to ${windowData.quality}% for ${windowId} (high FPS: ${currentFps})`);
-                }
-                
-                // Анализируем что дает высокий FPS
-                if (currentFps > 40) {
-                    addLog('perf', `🚀 HIGH FPS DETECTED! Window: ${windowId}, DOM: ${domKB}KB, Quality: ${currentQuality}%, Viewers: ${viewers}`);
-                }
-            }
-            
         } catch(e) {
             // Пропускаем кадр при ошибке
         }
         
         capturing = false;
-        
-        // Динамическая задержка для плавности
-        const elapsed = Date.now() - captureStart;
-        const delay = Math.max(1, 32 - elapsed);
-        setTimeout(() => capture(), delay);
+        setTimeout(capture, 50); // ~20 FPS
     };
     
     capture();
 }
 
-// Исправленная обработка взаимодействий
-async function handleInteraction(windowData, action, params) {
-    const { page } = windowData;
+// ===== API =====
+app.get('/api/status/:accountId', (req, res) => {
+    const acc = getAccount(req.params.accountId);
+    const windows = [];
     
-    try {
-        // Проверяем что страница не в процессе навигации
-        if (windowData.navigating && action !== 'navigate') {
-            addLog('warn', `⏳ Waiting for navigation to complete...`);
-            await new Promise(r => setTimeout(r, 1000));
-            windowData.navigating = false;
-        }
-        
-        switch(action) {
-            case 'click':
-                await page.mouse.click(params.x, params.y);
-                break;
-                
-            case 'dblclick':
-                await page.mouse.click(params.x, params.y, { clickCount: 2 });
-                break;
-                
-            case 'scroll':
-                await page.evaluate(({ x, y }) => window.scrollBy(x, y), params);
-                break;
-                
-            case 'type':
-                // Проверяем что контекст выполнения существует
-                try {
-                    await page.evaluate(() => document.readyState);
-                } catch(e) {
-                    addLog('warn', '⚠️ Page context lost, skipping type');
-                    return;
-                }
-                
-                // Кликаем на поле
-                await page.mouse.click(params.x, params.y);
-                await new Promise(r => setTimeout(r, 150));
-                
-                // Пробуем очистить через клавиатуру
-                try {
-                    await page.keyboard.down('Control');
-                    await page.keyboard.press('KeyA');
-                    await page.keyboard.up('Control');
-                    await page.keyboard.press('Backspace');
-                    await new Promise(r => setTimeout(r, 50));
-                } catch(e) {
-                    // Если не получилось - пробуем через evaluate
-                }
-                
-                // Вставляем текст через JavaScript (надежнее)
-                if (params.text && params.text.length > 0) {
-                    await page.evaluate((text) => {
-                        const el = document.activeElement || document.querySelector('input, textarea, [contenteditable="true"]');
-                        if (el) {
-                            if (el.isContentEditable || el.getAttribute('contenteditable') === 'true') {
-                                el.textContent = text;
-                            } else if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') {
-                                el.value = text;
-                            }
-                            // Триггерим события
-                            el.dispatchEvent(new Event('input', { bubbles: true }));
-                            el.dispatchEvent(new Event('change', { bubbles: true }));
-                            el.dispatchEvent(new Event('keyup', { bubbles: true }));
-                        }
-                    }, params.text);
-                    
-                    addLog('info', `📝 Text inserted: ${params.text.substring(0, 30)}...`);
-                }
-                break;
-                
-            case 'paste':
-                try {
-                    await page.evaluate(() => document.readyState);
-                } catch(e) {
-                    addLog('warn', '⚠️ Page context lost, skipping paste');
-                    return;
-                }
-                
-                await page.mouse.click(params.x, params.y);
-                await new Promise(r => setTimeout(r, 100));
-                
-                if (params.text) {
-                    await page.evaluate((text) => {
-                        const el = document.activeElement || document.querySelector('input, textarea, [contenteditable="true"]');
-                        if (el) {
-                            if (el.isContentEditable || el.getAttribute('contenteditable') === 'true') {
-                                el.textContent = text;
-                            } else if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') {
-                                el.value = text;
-                            }
-                            el.dispatchEvent(new Event('input', { bubbles: true }));
-                            el.dispatchEvent(new Event('change', { bubbles: true }));
-                        }
-                    }, params.text);
-                    
-                    addLog('info', `📋 Text pasted: ${params.text.substring(0, 30)}...`);
-                }
-                break;
-                
-            case 'keyPress':
-                await page.keyboard.press(params.key);
-                break;
-                
-            case 'navigate':
-                windowData.navigating = true;
-                try {
-                    await page.goto(params.url, { waitUntil: 'domcontentloaded', timeout: 10000 });
-                    windowData.url = params.url;
-                    addLog('info', `🧭 Navigated to: ${params.url}`);
-                } catch(e) {
-                    addLog('warn', `⚠️ Navigation timeout: ${params.url}`);
-                }
-                windowData.navigating = false;
-                break;
-                
-            case 'refresh':
-                try {
-                    await page.reload({ waitUntil: 'domcontentloaded', timeout: 10000 });
-                } catch(e) {}
-                break;
-                
-            case 'goBack':
-                try {
-                    await page.goBack({ timeout: 5000 });
-                    windowData.url = page.url();
-                } catch(e) {}
-                break;
-                
-            case 'goForward':
-                try {
-                    await page.goForward({ timeout: 5000 });
-                    windowData.url = page.url();
-                } catch(e) {}
-                break;
-        }
-    } catch(e) {
-        addLog('error', `❌ Interaction failed: ${action}`, { error: e.message.substring(0, 200) });
+    for (const [id, win] of acc.windows) {
+        windows.push({
+            windowId: id,
+            url: win.url,
+            autoScroll: win.autoScroll || false
+        });
     }
-}
-
-// API эндпоинты
-app.post('/api/interact', async (req, res) => {
-    const { accountId, windowId, action, params } = req.body;
-    const account = getAccount(accountId);
-    const windowData = account.browsers.get(windowId);
-    if (!windowData) {
-        return res.json({ success: false, error: 'Window not found' });
-    }
-    await handleInteraction(windowData, action, params);
-    res.json({ success: true });
+    
+    res.json({ accountId: req.params.accountId, windows });
 });
 
-app.post('/api/autoscroll', async (req, res) => {
-    const { accountId, windowId, enabled } = req.body;
-    const account = getAccount(accountId);
-    const windowData = account.browsers.get(windowId);
-    if (!windowData) return res.json({ success: false });
-    
-    if (enabled) {
-        if (account.autoScrolls.has(windowId)) clearInterval(account.autoScrolls.get(windowId));
-        const timer = setInterval(async () => {
-            try {
-                await windowData.page.evaluate(() => {
-                    if (window.pageYOffset + window.innerHeight >= document.documentElement.scrollHeight - 10) {
-                        window.scrollTo({ top: 0, behavior: 'smooth' });
-                    } else {
-                        window.scrollBy({ top: 150, behavior: 'smooth' });
-                    }
-                });
-            } catch(e) {}
-        }, 2000);
-        account.autoScrolls.set(windowId, timer);
-        windowData.autoScroll = true;
-    } else {
-        if (account.autoScrolls.has(windowId)) {
-            clearInterval(account.autoScrolls.get(windowId));
-            account.autoScrolls.delete(windowId);
-        }
-        windowData.autoScroll = false;
-    }
+app.get('/api/logs', (req, res) => {
+    res.json(logs);
+});
+
+app.post('/api/logs/clear', (req, res) => {
+    logs.length = 0;
     res.json({ success: true });
 });
 
@@ -533,123 +309,96 @@ app.post('/api/window/create', async (req, res) => {
 
 app.post('/api/window/close', async (req, res) => {
     const { accountId, windowId } = req.body;
-    const account = getAccount(accountId);
-    if (account.autoScrolls.has(windowId)) {
-        clearInterval(account.autoScrolls.get(windowId));
-        account.autoScrolls.delete(windowId);
+    const acc = getAccount(accountId);
+    
+    const win = acc.windows.get(windowId);
+    if (win) {
+        await win.page.close().catch(() => {});
+        acc.windows.delete(windowId);
+        
+        clearInterval(acc.autoScrolls.get(windowId));
+        acc.autoScrolls.delete(windowId);
+        
+        // Закрываем WebSocket клиентов
+        const cl = acc.clients.get(windowId);
+        if (cl) {
+            cl.forEach(ws => ws.close());
+            acc.clients.delete(windowId);
+        }
+        
+        acc.lastFrames.delete(windowId);
     }
-    const windowData = account.browsers.get(windowId);
-    if (windowData) {
-        await windowData.browser.close().catch(() => {});
-        account.browsers.delete(windowId);
-        account.clients.get(windowId)?.forEach(ws => ws.close());
-        account.clients.delete(windowId);
-        account.hiddenWindows.delete(windowId);
-        account.fpsStats.delete(windowId);
-    }
-    addLog('info', `🗑️ Closed: ${accountId}/${windowId}`);
+    
     res.json({ success: true });
 });
 
-app.post('/api/window/toggle-visibility', (req, res) => {
-    const { accountId, windowId } = req.body;
-    const account = getAccount(accountId);
-    if (account.hiddenWindows.has(windowId)) {
-        account.hiddenWindows.delete(windowId);
+app.post('/api/autoscroll', async (req, res) => {
+    const { accountId, windowId, enabled } = req.body;
+    const acc = getAccount(accountId);
+    const win = acc.windows.get(windowId);
+    if (!win) return res.json({ success: false });
+    
+    if (enabled) {
+        if (acc.autoScrolls.has(windowId)) clearInterval(acc.autoScrolls.get(windowId));
+        
+        const timer = setInterval(async () => {
+            try {
+                await win.page.evaluate(() => {
+                    if (window.pageYOffset + window.innerHeight >= document.documentElement.scrollHeight - 10) {
+                        window.scrollTo({ top: 0, behavior: 'smooth' });
+                    } else {
+                        window.scrollBy({ top: 200, behavior: 'smooth' });
+                    }
+                });
+            } catch(e) {}
+        }, 3000);
+        
+        acc.autoScrolls.set(windowId, timer);
+        win.autoScroll = true;
     } else {
-        account.hiddenWindows.add(windowId);
+        clearInterval(acc.autoScrolls.get(windowId));
+        acc.autoScrolls.delete(windowId);
+        win.autoScroll = false;
     }
-    res.json({ success: true });
-});
-
-app.get('/api/status/:accountId', (req, res) => {
-    const { accountId } = req.params;
-    const account = getAccount(accountId);
-    const windows = [];
-    for (const [id, data] of account.browsers) {
-        windows.push({
-            windowId: id,
-            url: data.url,
-            autoScroll: data.autoScroll || false,
-            title: data.customTitle || id,
-            hidden: account.hiddenWindows.has(id),
-            quality: data.quality
-        });
-    }
-    res.json({ accountId, windows, hiddenCount: account.hiddenWindows.size });
-});
-
-// Эндпоинт для получения FPS статистики
-app.get('/api/fps-stats/:accountId/:windowId', (req, res) => {
-    const { accountId, windowId } = req.params;
-    const account = getAccount(accountId);
-    const stats = account.fpsStats.get(windowId);
-    if (!stats) return res.json({ error: 'No stats' });
-    res.json(stats);
-});
-
-app.get('/api/logs', (req, res) => {
-    // Возвращаем последние 200 записей для скорости
-    res.json(logBuffer.slice(-200));
-});
-
-app.get('/api/logs/all', (req, res) => {
-    res.json(logBuffer);
-});
-
-app.post('/api/logs/clear', (req, res) => {
-    logBuffer = [];
-    saveLogs();
-    addLog('info', '🗑️ Logs cleared');
+    
     res.json({ success: true });
 });
 
 app.post('/api/init-account', async (req, res) => {
     const { accountId } = req.body;
-    const account = getAccount(accountId);
-    if (account.browsers.size === 0) {
+    const acc = getAccount(accountId);
+    
+    if (acc.windows.size === 0) {
         const defaults = [
             { id: 'main1', url: 'https://example.com' },
             { id: 'main2', url: 'https://google.com' },
             { id: 'main3', url: 'https://github.com' }
         ];
+        
         for (const win of defaults) {
             await createWindow(accountId, win.id, win.url);
-            await new Promise(r => setTimeout(r, 2000));
+            await new Promise(r => setTimeout(r, 1500));
         }
     }
+    
     const windows = [];
-    for (const [id, data] of account.browsers) {
-        windows.push({
-            windowId: id, url: data.url, autoScroll: data.autoScroll,
-            title: data.customTitle || id, hidden: account.hiddenWindows.has(id),
-            quality: data.quality
-        });
+    for (const [id, win] of acc.windows) {
+        windows.push({ windowId: id, url: win.url, autoScroll: win.autoScroll });
     }
+    
     res.json({ success: true, accountId, windows });
 });
 
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
-    addLog('success', `🚀 Live Browser Pro running on port ${PORT}`);
-    console.log(`🌐 http://localhost:${PORT}`);
+    addLog('success', `Server running on port ${PORT}`);
+    console.log(`http://localhost:${PORT}`);
 });
 
-// Сохраняем логи при выходе
 process.on('SIGTERM', async () => {
-    addLog('warn', '🧹 Shutting down...');
-    saveLogs();
-    for (const [accountId, account] of accounts) {
-        for (const [id, interval] of account.autoScrolls) clearInterval(interval);
-        for (const [id, data] of account.browsers) {
-            await data.browser.close().catch(() => {});
-        }
+    for (const [id, acc] of accounts) {
+        closeAccount(id);
     }
     server.close();
     process.exit(0);
 });
-
-// Сохраняем логи периодически
-setInterval(() => {
-    saveLogs();
-}, 30000);
