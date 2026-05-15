@@ -3,68 +3,119 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-    <title>Live Browser Pro X</title>
+    <title>Live Browser Pro</title>
     <link rel="stylesheet" href="styles.css">
     <meta name="theme-color" content="#0a0a1a">
 </head>
 <body>
     <div id="app">
+        <!-- Верхняя панель -->
         <header class="top-bar">
-            <button class="icon-btn" id="btnSidebar">☰</button>
-            <h1>🌐 Live Browser</h1>
-            <div class="spacer"></div>
-            <span id="fpsCounter" class="badge">0 FPS</span>
-            <button class="icon-btn" id="btnSettings">⚙️</button>
-            <div class="account-badge" id="accountBadge">👤 <span id="currentAccountId">0</span></div>
+            <div class="top-left">
+                <button class="icon-btn" id="btnSidebar" title="Меню">☰</button>
+                <h1>🌐 Live Browser</h1>
+            </div>
+            <div class="top-center">
+                <div class="url-bar">
+                    <input type="text" id="urlInput" placeholder="Введите URL..." autocomplete="off">
+                    <button id="btnGo" title="Перейти">➤</button>
+                </div>
+            </div>
+            <div class="top-right">
+                <span id="fpsCounter" class="badge">0 FPS</span>
+                <button class="icon-btn" id="btnSettings" title="Настройки">⚙️</button>
+                <div class="account-badge" id="accountBadge">
+                    👤 <span id="currentAccountId">0</span>
+                </div>
+            </div>
         </header>
 
+        <!-- Боковая панель -->
         <aside id="sidebar" class="sidebar hidden">
             <div class="sidebar-header">
                 <h2>📑 Окна</h2>
                 <button class="icon-btn" id="closeSidebar">✕</button>
             </div>
             <div class="sidebar-section">
+                <h3>🖥️ Активные окна</h3>
                 <div id="windowList" class="list"></div>
-                <button id="btnAddWindow" class="btn primary full-width">➕ Новое окно</button>
             </div>
             <div class="sidebar-section">
                 <h3>👻 Скрытые окна</h3>
                 <div id="hiddenList" class="list"></div>
                 <button id="btnShowAll" class="btn full-width">👁️ Показать все</button>
             </div>
+            <button id="btnAddWindow" class="btn primary full-width">➕ Новое окно</button>
         </aside>
 
+        <!-- Сетка браузеров -->
         <main class="browsers-grid" id="browsersGrid">
-            <div class="loading-center"><div class="spinner"></div><p>Запуск...</p></div>
+            <div class="loading-center">
+                <div class="spinner"></div>
+                <p>Загрузка окружения...</p>
+            </div>
         </main>
 
+        <!-- Панель инструментов -->
         <footer class="toolbar">
-            <button class="icon-btn" id="btnBack">◀</button>
-            <button class="icon-btn" id="btnForward">▶</button>
-            <button class="icon-btn" id="btnRefresh">↻</button>
-            <button class="icon-btn" id="btnScroll">↓</button>
-            <button class="icon-btn" id="btnAutoScroll">🛡️</button>
-            <button class="icon-btn" id="btnType">✏️</button>
-            <button class="icon-btn" id="btnScreenshot">📸</button>
-            <button class="icon-btn" id="btnClose" style="color:#e94560;">✕</button>
-            <span id="hiddenCount" style="font-size:0.75rem;color:var(--muted);"></span>
+            <button class="icon-btn" id="btnBack" title="Назад">◀</button>
+            <button class="icon-btn" id="btnForward" title="Вперед">▶</button>
+            <button class="icon-btn" id="btnRefresh" title="Обновить">↻</button>
+            <button class="icon-btn" id="btnScroll" title="Прокрутить">↓</button>
+            <button class="icon-btn" id="btnAutoScroll" title="Анти-кик">🛡️</button>
+            <button class="icon-btn" id="btnType" title="Ввод текста">✏️</button>
+            <button class="icon-btn" id="btnScreenshot" title="Скриншот">📸</button>
+            <button class="icon-btn" id="btnClose" title="Закрыть окно" style="color:#e94560;">✕</button>
+            <span id="hiddenCount" class="hidden-count"></span>
         </footer>
 
+        <!-- Виртуальная клавиатура -->
+        <div id="virtualKeyboard" class="virtual-keyboard hidden">
+            <div class="keyboard-header">
+                <span>⌨️ Ввод текста</span>
+                <div class="keyboard-header-actions">
+                    <button class="btn-sm" id="btnPasteClipboard">📋 Вставить из буфера</button>
+                    <button class="btn-sm" id="btnKeyboardClose">✕</button>
+                </div>
+            </div>
+            <textarea id="keyboardInput" placeholder="Введите текст или вставьте из буфера обмена..." rows="3"></textarea>
+            <div class="keyboard-keys">
+                <button class="key-btn" data-key="Enter">Enter ↵</button>
+                <button class="key-btn" data-key="Tab">Tab ⇥</button>
+                <button class="key-btn" data-key="Escape">Esc</button>
+                <button class="key-btn" data-key="Backspace">⌫</button>
+                <button class="key-btn" data-key="Delete">Del</button>
+                <button class="key-btn" data-key="ArrowUp">↑</button>
+                <button class="key-btn" data-key="ArrowDown">↓</button>
+                <button class="key-btn" data-key="ArrowLeft">←</button>
+                <button class="key-btn" data-key="ArrowRight">→</button>
+                <button class="key-btn" data-key="Space">Пробел</button>
+            </div>
+            <div class="keyboard-actions">
+                <button class="btn primary" id="btnSendText">📤 Отправить</button>
+                <button class="btn" id="btnClearAndType">🗑️ Очистить и ввести</button>
+            </div>
+        </div>
+
+        <!-- Модальные окна -->
         <div id="settingsModal" class="modal hidden">
             <div class="modal-content">
                 <h3>⚙️ Настройки</h3>
-                <label>ID: <input type="number" id="accountIdInput" value="0" min="0" max="9999"></label>
-                <button class="btn primary" id="btnChangeAccount">🔄 Сменить</button>
-                <button class="btn" id="btnShowLogs">📋 Логи</button>
-                <p class="hint">Одинаковый ID = общие окна</p>
-                <button class="btn" id="btnCloseSettings">Закрыть</button>
+                <div class="setting-row">
+                    <label>ID аккаунта:</label>
+                    <input type="number" id="accountIdInput" value="0" min="0" max="9999">
+                </div>
+                <button class="btn primary full-width" id="btnChangeAccount">🔄 Сменить аккаунт</button>
+                <button class="btn full-width" id="btnShowLogs">📋 Журнал событий</button>
+                <p class="hint">💡 Одинаковый ID = общие окна и данные</p>
+                <button class="btn full-width" id="btnCloseSettings">Закрыть</button>
             </div>
         </div>
 
         <div id="logsModal" class="modal hidden">
             <div class="modal-content wide">
                 <h3>📋 Журнал событий</h3>
-                <div id="logContainer" class="log-container"></div>
+                <div id="logContainer" class="log-container">Загрузка...</div>
                 <div class="modal-actions">
                     <button class="btn" id="btnCopyLogs">📋 Копировать</button>
                     <button class="btn" id="btnClearLogs">🗑️ Очистить</button>
@@ -72,13 +123,7 @@
                 </div>
             </div>
         </div>
-
-        <div id="mobileKeyboard" class="mobile-keyboard hidden">
-            <input type="text" id="mobileInput" placeholder="Текст..." autocomplete="off">
-            <button id="btnSendMobile">➤</button>
-            <button id="btnHideKeyboard">✕</button>
-        </div>
     </div>
     <script src="client.js"></script>
 </body>
-</html>
+    </html>
