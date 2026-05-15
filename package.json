@@ -1,7 +1,7 @@
 {
-  "name": "sync-browser-pro",
-  "version": "3.0.0",
-  "description": "Real-time multi-browser with full control",
+  "name": "live-browser-pro",
+  "version": "5.0.0",
+  "description": "Multi-account remote browser with MJPEG streaming, mobile-first UI",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
@@ -9,8 +9,7 @@
   "dependencies": {
     "express": "^4.18.2",
     "puppeteer-core": "^21.6.1",
-    "@sparticuz/chromium": "^119.0.0",
-    "socket.io": "^4.7.2"
+    "@sparticuz/chromium": "^119.0.0"
   },
   "engines": {
     "node": "20.x"
