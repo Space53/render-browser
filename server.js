@@ -1,67 +1,82 @@
 const express = require('express');
 const http = require('http');
+const WebSocket = require('ws');
 const path = require('path');
 const puppeteer = require('puppeteer-core');
 const chromium = require('@sparticuz/chromium');
 
 const app = express();
 const server = http.createServer(app);
+const wss = new WebSocket.Server({ server });
 
 app.use(express.static(path.join(__dirname, 'public')));
 app.use(express.json());
 
-// Хранилище аккаунтов
+// ----- Хранилище аккаунтов -----
 const accounts = new Map();
+
+// ----- Буфер логов (последние 500 записей) -----
+const logBuffer = [];
+const MAX_LOGS = 500;
+
+function addLog(level, message, data = null) {
+    const entry = {
+        timestamp: new Date().toISOString(),
+        level,
+        message,
+        data: data ? JSON.stringify(data) : undefined
+    };
+    logBuffer.push(entry);
+    if (logBuffer.length > MAX_LOGS) logBuffer.shift();
+    console.log(`[${level.toUpperCase()}] ${message}`, data || '');
+}
 
 function getAccount(accountId) {
     if (!accounts.has(accountId)) {
         accounts.set(accountId, {
-            browsers: new Map(),      // windowId -> { browser, page, url, autoScroll }
-            frameBuffers: new Map(),  // windowId -> Buffer
-            clients: new Map(),       // windowId -> Set<response>
-            autoScrolls: new Map(),   // windowId -> interval
+            browsers: new Map(),
+            clients: new Map(),      // windowId -> Set<WebSocket>
+            autoScrolls: new Map(),
             createdAt: Date.now()
         });
-        console.log(`🆕 Account created: ${accountId}`);
+        addLog('info', `Account ${accountId} created`);
     }
     return accounts.get(accountId);
 }
 
-// MJPEG стриминг
-app.get('/stream/:accountId/:windowId', (req, res) => {
-    const { accountId, windowId } = req.params;
+// ----- WebSocket обработка -----
+wss.on('connection', (ws, req) => {
+    // URL вида /ws/:accountId/:windowId
+    const urlParts = req.url.split('/').filter(p => p);
+    if (urlParts.length < 3 || urlParts[0] !== 'ws') {
+        ws.close();
+        return;
+    }
+    const [, accountId, windowId] = urlParts;
     const account = getAccount(accountId);
-
-    res.writeHead(200, {
-        'Content-Type': 'multipart/x-mixed-replace; boundary=frame',
-        'Cache-Control': 'no-cache, no-store, must-revalidate',
-        'Connection': 'keep-alive',
-        'Pragma': 'no-cache'
-    });
 
     if (!account.clients.has(windowId)) {
         account.clients.set(windowId, new Set());
     }
-    account.clients.get(windowId).add(res);
+    account.clients.get(windowId).add(ws);
+    addLog('info', `WebSocket connected: ${accountId}/${windowId}`);
 
-    // Отправить последний кадр сразу при подключении
-    const buffer = account.frameBuffers.get(windowId);
+    // Отправляем последний кадр сразу
+    const buffer = account.browsers.get(windowId)?.lastFrame;
     if (buffer) {
-        try {
-            res.write(`--frame\r\nContent-Type: image/jpeg\r\nContent-Length: ${buffer.length}\r\n\r\n`);
-            res.write(buffer);
-            res.write('\r\n');
-        } catch(e) {}
+        ws.send(buffer, { binary: true });
     }
 
-    req.on('close', () => {
+    ws.on('close', () => {
         const clients = account.clients.get(windowId);
-        if (clients) clients.delete(res);
+        if (clients) clients.delete(ws);
+        addLog('info', `WebSocket disconnected: ${accountId}/${windowId}`);
     });
 });
 
-// Запуск браузера с оптимизированными аргументами
+// ----- Запуск браузера -----
 async function launchBrowser() {
+    addLog('info', 'Launching headless Chromium...');
     return await puppeteer.launch({
         args: [
             ...chromium.args,
@@ -70,8 +85,7 @@ async function launchBrowser() {
             '--disable-dev-shm-usage',
             '--disable-gpu',
             '--disable-web-security',
-            '--disable-features=IsolateOrigins,site-per-process',
-            '--disable-site-isolation-trials'
+            '--disable-features=IsolateOrigins,site-per-process'
         ],
         defaultViewport: { width: 1280, height: 720 },
         executablePath: await chromium.executablePath(),
@@ -80,12 +94,12 @@ async function launchBrowser() {
     });
 }
 
-// Создание нового окна (страницы)
+// ----- Создание окна -----
 async function createWindow(accountId, windowId, url) {
     const account = getAccount(accountId);
+    addLog('info', `Creating window ${accountId}/${windowId} -> ${url}`);
 
     try {
-        // Закрываем существующее окно с таким же ID, если есть
         if (account.browsers.has(windowId)) {
             const old = account.browsers.get(windowId);
             await old.browser.close().catch(() => {});
@@ -95,33 +109,40 @@ async function createWindow(accountId, windowId, url) {
         const browser = await launchBrowser();
         const page = await browser.newPage();
 
-        // Маскировка WebDriver
         await page.evaluateOnNewDocument(() => {
             Object.defineProperty(navigator, 'webdriver', { get: () => false });
             window.chrome = { runtime: {} };
         });
 
-        await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
+        await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36');
         await page.setViewport({ width: 1280, height: 720 });
         await page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
 
-        account.browsers.set(windowId, { browser, page, url, autoScroll: false });
+        const windowData = {
+            browser,
+            page,
+            url,
+            autoScroll: false,
+            customTitle: null,
+            lastFrame: null
+        };
+        account.browsers.set(windowId, windowData);
 
-        startFrameLoop(accountId, windowId, page);
-
-        console.log(`✅ [${accountId}] ${windowId}: ${url}`);
+        startFrameCapture(accountId, windowId, page);
+        addLog('success', `Window created: ${accountId}/${windowId}`);
         return true;
     } catch (error) {
-        console.error(`❌ [${accountId}] ${windowId}:`, error.message);
+        addLog('error', `Failed to create window ${accountId}/${windowId}`, { error: error.message });
         return false;
     }
 }
 
-// Цикл захвата кадров с адаптивным интервалом (около 30 fps)
-function startFrameLoop(accountId, windowId, page) {
+// ----- Захват и рассылка кадров через WebSocket (высокий FPS) -----
+function startFrameCapture(accountId, windowId, page) {
     const account = getAccount(accountId);
     let capturing = false;
-    const intervalMs = 33; // ~30 fps
+    const TARGET_FPS = 30;
+    const INTERVAL = 1000 / TARGET_FPS;
 
     const capture = async () => {
         if (!account.browsers.has(windowId)) return;
@@ -129,51 +150,45 @@ function startFrameLoop(accountId, windowId, page) {
         capturing = true;
 
         try {
-            const buffer = await page.screenshot({
-                type: 'jpeg',
-                quality: 45,
-                encoding: 'binary'
-            });
-
-            account.frameBuffers.set(windowId, buffer);
+            const buffer = await page.screenshot({ type: 'jpeg', quality: 40, encoding: 'binary' });
+            const windowData = account.browsers.get(windowId);
+            if (windowData) windowData.lastFrame = buffer;
 
             const clients = account.clients.get(windowId);
             if (clients && clients.size > 0) {
-                const header = `--frame\r\nContent-Type: image/jpeg\r\nContent-Length: ${buffer.length}\r\n\r\n`;
-
-                for (const client of clients) {
+                for (const ws of clients) {
                     try {
-                        client.write(header);
-                        client.write(buffer);
-                        client.write('\r\n');
-                    } catch(e) {
-                        clients.delete(client);
+                        if (ws.readyState === WebSocket.OPEN) {
+                            ws.send(buffer, { binary: true });
+                        }
+                    } catch (e) {
+                        clients.delete(ws);
                     }
                 }
             }
-        } catch(e) {
+        } catch (e) {
             // Игнорируем ошибки скриншота (например, страница закрыта)
         }
-
         capturing = false;
-        setTimeout(capture, intervalMs);
+        setTimeout(() => capture(), INTERVAL);
     };
-
     capture();
 }
 
-// Эндпоинт взаимодействия
+// ----- API взаимодействия -----
 app.post('/api/interact', async (req, res) => {
     const { accountId, windowId, action, params } = req.body;
+    addLog('info', `Interact: ${action} on ${accountId}/${windowId}`, params);
     const account = getAccount(accountId);
     const data = account.browsers.get(windowId);
-
-    if (!data) return res.json({ success: false, error: 'Window not found' });
+    if (!data) {
+        addLog('error', `Window not found: ${windowId}`);
+        return res.json({ success: false, error: 'Window not found' });
+    }
 
     try {
         const page = data.page;
-
-        switch(action) {
+        switch (action) {
             case 'click':
                 await page.mouse.click(params.x, params.y);
                 break;
@@ -184,7 +199,6 @@ app.post('/api/interact', async (req, res) => {
                 await page.evaluate(({ x, y }) => window.scrollBy(x, y), params);
                 break;
             case 'type':
-                // Кликаем для фокуса, затем вводим текст
                 await page.mouse.click(params.x, params.y);
                 await new Promise(r => setTimeout(r, 50));
                 await page.keyboard.down('Control');
@@ -211,23 +225,18 @@ app.post('/api/interact', async (req, res) => {
                 await page.goForward({ timeout: 10000 }).catch(() => {});
                 data.url = page.url();
                 break;
-            case 'setViewport':
-                if (params.width && params.height) {
-                    await page.setViewport({ width: params.width, height: params.height });
-                }
-                break;
             case 'zoom':
                 await page.evaluate(zoom => { document.body.style.zoom = zoom; }, params.zoom);
                 break;
         }
-
         res.json({ success: true });
-    } catch(error) {
+    } catch (error) {
+        addLog('error', `Interaction failed: ${action}`, { error: error.message });
         res.json({ success: false, error: error.message });
     }
 });
 
-// Автоскролл (анти-кик)
+// ----- Автоскролл -----
 app.post('/api/autoscroll', async (req, res) => {
     const { accountId, windowId, enabled, interval = 3000 } = req.body;
     const account = getAccount(accountId);
@@ -236,7 +245,6 @@ app.post('/api/autoscroll', async (req, res) => {
 
     if (enabled) {
         if (account.autoScrolls.has(windowId)) clearInterval(account.autoScrolls.get(windowId));
-
         const timer = setInterval(async () => {
             try {
                 await data.page.evaluate(() => {
@@ -248,9 +256,8 @@ app.post('/api/autoscroll', async (req, res) => {
                         window.scrollBy({ top: 200, behavior: 'smooth' });
                     }
                 });
-            } catch(e) {}
+            } catch (e) {}
         }, interval);
-
         account.autoScrolls.set(windowId, timer);
         data.autoScroll = true;
     } else {
@@ -260,11 +267,11 @@ app.post('/api/autoscroll', async (req, res) => {
         }
         data.autoScroll = false;
     }
-
+    addLog('info', `Autoscroll ${enabled ? 'ON' : 'OFF'} for ${accountId}/${windowId}`);
     res.json({ success: true, autoScroll: enabled });
 });
 
-// Управление окнами
+// ----- Управление окнами -----
 app.post('/api/create-window', async (req, res) => {
     const { accountId, windowId, url } = req.body;
     const success = await createWindow(accountId, windowId, url);
@@ -273,19 +280,19 @@ app.post('/api/create-window', async (req, res) => {
 
 app.post('/api/close-window', async (req, res) => {
     const { accountId, windowId } = req.body;
+    addLog('info', `Closing window ${accountId}/${windowId}`);
     const account = getAccount(accountId);
-
     if (account.autoScrolls.has(windowId)) {
         clearInterval(account.autoScrolls.get(windowId));
         account.autoScrolls.delete(windowId);
     }
-
     const data = account.browsers.get(windowId);
     if (data) {
         await data.browser.close().catch(() => {});
         account.browsers.delete(windowId);
+        account.clients.get(windowId)?.forEach(ws => ws.close());
+        account.clients.delete(windowId);
     }
-
     res.json({ success: true });
 });
 
@@ -306,7 +313,6 @@ app.get('/api/screenshot/:accountId/:windowId', async (req, res) => {
     const account = getAccount(accountId);
     const data = account.browsers.get(windowId);
     if (!data) return res.status(404).send('Not found');
-
     try {
         const buffer = await data.page.screenshot({ type: 'png' });
         res.writeHead(200, {
@@ -314,7 +320,7 @@ app.get('/api/screenshot/:accountId/:windowId', async (req, res) => {
             'Content-Disposition': `attachment; filename="screenshot-${windowId}.png"`
         });
         res.end(buffer);
-    } catch(e) {
+    } catch (e) {
         res.status(500).send('Screenshot failed');
     }
 });
@@ -322,7 +328,6 @@ app.get('/api/screenshot/:accountId/:windowId', async (req, res) => {
 app.get('/api/status/:accountId', (req, res) => {
     const { accountId } = req.params;
     const account = getAccount(accountId);
-
     const windows = [];
     for (const [id, data] of account.browsers) {
         windows.push({
@@ -335,40 +340,41 @@ app.get('/api/status/:accountId', (req, res) => {
     res.json({ accountId, windows });
 });
 
+// ----- Логи -----
+app.get('/api/logs', (req, res) => {
+    res.json(logBuffer);
+});
+
+// ----- Инициализация аккаунта -----
 app.post('/api/init-account', async (req, res) => {
     const { accountId } = req.body;
     const account = getAccount(accountId);
-
-    // Если окон нет, создаём три окна по умолчанию
     if (account.browsers.size === 0) {
         const defaults = [
             { id: 'main1', url: 'https://example.com' },
             { id: 'main2', url: 'https://google.com' },
             { id: 'main3', url: 'https://github.com' }
         ];
-
         for (const win of defaults) {
             await createWindow(accountId, win.id, win.url);
             await new Promise(r => setTimeout(r, 1500));
         }
     }
-
     const windows = [];
     for (const [id, data] of account.browsers) {
         windows.push({ windowId: id, url: data.url, autoScroll: data.autoScroll, title: data.customTitle || id });
     }
-
     res.json({ success: true, accountId, windows });
 });
 
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
-    console.log(`🚀 Live Browser Pro running on port ${PORT}`);
-    console.log('👥 Multi-account system active (accounts never deleted)');
+    addLog('info', `Server listening on port ${PORT}`);
+    console.log(`🚀 Live Browser Pro X running on port ${PORT}`);
 });
 
 process.on('SIGTERM', async () => {
-    console.log('🧹 Shutting down gracefully...');
+    addLog('info', 'Shutting down...');
     for (const [accountId, account] of accounts) {
         for (const [id, interval] of account.autoScrolls) clearInterval(interval);
         for (const [id, data] of account.browsers) {
