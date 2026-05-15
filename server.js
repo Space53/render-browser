@@ -12,13 +12,9 @@ const wss = new WebSocket.Server({ server });
 app.use(express.static(path.join(__dirname, 'public')));
 app.use(express.json());
 
-// Хранилище
 const accounts = new Map();
 const logBuffer = [];
-const MAX_LOGS = 1000;
-let browserQueue = [];
-let activeBrowsers = 0;
-const MAX_BROWSERS = 2;
+const MAX_LOGS = 500;
 
 function addLog(level, message, data = null) {
     const entry = {
@@ -30,11 +26,7 @@ function addLog(level, message, data = null) {
     };
     logBuffer.push(entry);
     if (logBuffer.length > MAX_LOGS) logBuffer.shift();
-    
-    // Цветной вывод в консоль
-    const colors = { error: '\x1b[31m', warn: '\x1b[33m', info: '\x1b[36m', success: '\x1b[32m', fps: '\x1b[35m' };
-    const color = colors[level] || '\x1b[0m';
-    console.log(`${color}[${entry.iso}] ${level.toUpperCase()}: ${message}\x1b[0m`, data || '');
+    console.log(`[${entry.iso}] ${level.toUpperCase()}: ${message}`, data || '');
 }
 
 function getAccount(accountId) {
@@ -43,44 +35,31 @@ function getAccount(accountId) {
             browsers: new Map(),
             clients: new Map(),
             autoScrolls: new Map(),
-            fpsCounters: new Map(),
             hiddenWindows: new Set(),
             createdAt: Date.now()
         });
-        addLog('info', `✅ Account ${accountId} created`);
+        addLog('info', `Account ${accountId} created`);
     }
     return accounts.get(accountId);
 }
 
-// WebSocket обработка
 wss.on('connection', (ws, req) => {
     const url = new URL(req.url, `http://${req.headers.host}`);
     const accountId = url.searchParams.get('accountId');
     const windowId = url.searchParams.get('windowId');
     
-    if (!accountId || !windowId) {
-        ws.close();
-        return;
-    }
+    if (!accountId || !windowId) { ws.close(); return; }
     
     const account = getAccount(accountId);
-    
-    if (!account.clients.has(windowId)) {
-        account.clients.set(windowId, new Set());
-    }
+    if (!account.clients.has(windowId)) account.clients.set(windowId, new Set());
     account.clients.get(windowId).add(ws);
     
     ws.isAlive = true;
     ws.on('pong', () => { ws.isAlive = true; });
     
-    addLog('info', `🔌 WS connect: ${accountId}/${windowId} (total: ${account.clients.get(windowId).size})`);
-    
-    // Отправка последнего кадра
     const windowData = account.browsers.get(windowId);
     if (windowData?.lastFrame && ws.readyState === WebSocket.OPEN) {
-        try {
-            ws.send(windowData.lastFrame, { binary: true });
-        } catch(e) {}
+        try { ws.send(windowData.lastFrame, { binary: true }); } catch(e) {}
     }
     
     ws.on('message', async (data) => {
@@ -94,14 +73,10 @@ wss.on('connection', (ws, req) => {
     
     ws.on('close', () => {
         const clients = account.clients.get(windowId);
-        if (clients) {
-            clients.delete(ws);
-            addLog('info', `🔌 WS disconnect: ${accountId}/${windowId} (${clients.size} left)`);
-        }
+        if (clients) clients.delete(ws);
     });
 });
 
-// Ping/Pong для поддержания соединений
 setInterval(() => {
     wss.clients.forEach(ws => {
         if (ws.isAlive === false) return ws.terminate();
@@ -110,66 +85,30 @@ setInterval(() => {
     });
 }, 30000);
 
-// Запуск браузера с ограничением
 async function launchBrowser() {
-    if (activeBrowsers >= MAX_BROWSERS) {
-        addLog('warn', `⏳ Browser queue: ${browserQueue.length + 1} waiting`);
-        await new Promise(resolve => browserQueue.push(resolve));
-    }
-    
-    activeBrowsers++;
-    addLog('info', `🌐 Launching browser (${activeBrowsers}/${MAX_BROWSERS})`);
-    
-    try {
-        const browser = await puppeteer.launch({
-            args: [
-                ...chromium.args,
-                '--no-sandbox',
-                '--disable-setuid-sandbox',
-                '--disable-dev-shm-usage',
-                '--disable-gpu',
-                '--single-process',
-                '--disable-features=IsolateOrigins'
-            ],
-            defaultViewport: { width: 1280, height: 720 },
-            executablePath: await chromium.executablePath(),
-            headless: chromium.headless,
-            ignoreHTTPSErrors: true,
-            timeout: 60000
-        });
-        
-        return browser;
-    } catch(e) {
-        activeBrowsers--;
-        processQueue();
-        throw e;
-    }
+    return await puppeteer.launch({
+        args: [
+            ...chromium.args,
+            '--no-sandbox',
+            '--disable-setuid-sandbox',
+            '--disable-dev-shm-usage',
+            '--disable-gpu',
+            '--single-process',
+            '--disable-features=IsolateOrigins'
+        ],
+        defaultViewport: { width: 1280, height: 720 },
+        executablePath: await chromium.executablePath(),
+        headless: chromium.headless,
+        ignoreHTTPSErrors: true
+    });
 }
 
-function processQueue() {
-    if (browserQueue.length > 0) {
-        const next = browserQueue.shift();
-        next();
-    }
-}
-
-async function closeBrowser(browser) {
-    try {
-        await browser.close();
-    } catch(e) {}
-    activeBrowsers--;
-    processQueue();
-}
-
-// Создание окна
 async function createWindow(accountId, windowId, url) {
     const account = getAccount(accountId);
-    addLog('info', `🆕 Creating ${accountId}/${windowId} → ${url}`);
     
     try {
         if (account.browsers.has(windowId)) {
-            const old = account.browsers.get(windowId);
-            await closeBrowser(old.browser);
+            await account.browsers.get(windowId).browser.close().catch(() => {});
             account.browsers.delete(windowId);
         }
         
@@ -183,108 +122,52 @@ async function createWindow(accountId, windowId, url) {
         
         await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0');
         await page.setViewport({ width: 1280, height: 720 });
+        await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => {
+            return page.goto('about:blank');
+        });
         
-        // Навигация с повторными попытками
-        let navSuccess = false;
-        for (let i = 0; i < 3; i++) {
-            try {
-                await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 15000 });
-                navSuccess = true;
-                break;
-            } catch(e) {
-                addLog('warn', `⏳ Retry ${i+1} for ${url}`);
-                await new Promise(r => setTimeout(r, 2000));
-            }
-        }
-        
-        if (!navSuccess) {
-            await page.goto('about:blank');
-            url = 'about:blank';
-        }
-        
-        const windowData = {
-            browser,
-            page,
-            url,
-            autoScroll: false,
-            customTitle: null,
-            lastFrame: null,
-            fpsCount: 0,
-            lastFpsTime: Date.now()
-        };
-        
+        const windowData = { browser, page, url, autoScroll: false, customTitle: null, lastFrame: null };
         account.browsers.set(windowId, windowData);
-        startFrameCapture(accountId, windowId, page);
         
-        addLog('success', `✅ Created: ${accountId}/${windowId}`);
+        startFrameCapture(accountId, windowId, page);
+        addLog('success', `Window created: ${accountId}/${windowId}`);
         return true;
     } catch(error) {
-        addLog('error', `❌ Failed: ${accountId}/${windowId}`, { error: error.message });
+        addLog('error', `Failed: ${accountId}/${windowId}`, { error: error.message });
         return false;
     }
 }
 
-// Захват кадров - оптимизированный для 60 FPS
 function startFrameCapture(accountId, windowId, page) {
     const account = getAccount(accountId);
-    let frameCount = 0;
-    let lastLog = Date.now();
+    let capturing = false;
     
     const capture = async () => {
         const windowData = account.browsers.get(windowId);
-        if (!windowData) return;
-        
-        const start = Date.now();
+        if (!windowData || capturing) return;
+        capturing = true;
         
         try {
-            const buffer = await page.screenshot({ 
-                type: 'jpeg', 
-                quality: 35,
-                encoding: 'binary'
-            });
-            
+            const buffer = await page.screenshot({ type: 'jpeg', quality: 40, encoding: 'binary' });
             windowData.lastFrame = buffer;
-            frameCount++;
             
-            // Отправка всем клиентам
             const clients = account.clients.get(windowId);
             if (clients && clients.size > 0) {
                 for (const ws of clients) {
                     if (ws.readyState === WebSocket.OPEN) {
-                        try {
-                            ws.send(buffer, { binary: true });
-                        } catch(e) {
-                            clients.delete(ws);
-                        }
+                        try { ws.send(buffer, { binary: true }); } catch(e) { clients.delete(ws); }
                     }
                 }
             }
-            
-            // Логирование FPS каждые 5 секунд
-            const now = Date.now();
-            if (now - lastLog > 5000) {
-                const fps = Math.round(frameCount / ((now - lastLog) / 1000));
-                if (fps > 0) {
-                    addLog('fps', `📊 ${accountId}/${windowId}: ${fps} FPS (${clients?.size || 0} viewers)`);
-                }
-                frameCount = 0;
-                lastLog = now;
-            }
-            
-        } catch(e) {
-            // Игнорируем ошибки захвата
-        }
+        } catch(e) {}
         
-        // Динамический интервал для достижения 60 FPS
-        const elapsed = Date.now() - start;
-        const delay = Math.max(1, 16 - elapsed); // Цель: 60 FPS (16ms)
-        setTimeout(() => capture(), delay);
+        capturing = false;
+        setTimeout(() => capture(), 33);
     };
     
     capture();
 }
 
-// Обработка взаимодействий
 async function handleInteraction(page, action, params) {
     try {
         switch(action) {
@@ -298,15 +181,54 @@ async function handleInteraction(page, action, params) {
                 await page.evaluate(({ x, y }) => window.scrollBy(x, y), params);
                 break;
             case 'type':
+                // Кликаем на поле
                 await page.mouse.click(params.x, params.y);
-                await new Promise(r => setTimeout(r, 30));
+                await new Promise(r => setTimeout(r, 100));
+                
+                // Очищаем через Ctrl+A
                 await page.keyboard.down('Control');
                 await page.keyboard.press('KeyA');
                 await page.keyboard.up('Control');
-                await page.keyboard.press('Backspace');
-                if (params.text) {
-                    await page.keyboard.type(params.text, { delay: 10 });
+                await new Promise(r => setTimeout(r, 50));
+                
+                // Вставляем текст
+                if (params.text && params.text.length > 0) {
+                    await page.evaluate((text) => {
+                        const el = document.activeElement;
+                        if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) {
+                            if (el.isContentEditable) {
+                                el.textContent = text;
+                            } else {
+                                el.value = text;
+                            }
+                            el.dispatchEvent(new Event('input', { bubbles: true }));
+                            el.dispatchEvent(new Event('change', { bubbles: true }));
+                        }
+                    }, params.text);
                 }
+                break;
+            case 'paste':
+                // Кликаем и вставляем без очистки
+                await page.mouse.click(params.x, params.y);
+                await new Promise(r => setTimeout(r, 100));
+                
+                if (params.text) {
+                    await page.evaluate((text) => {
+                        const el = document.activeElement;
+                        if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) {
+                            if (el.isContentEditable) {
+                                el.textContent = text;
+                            } else {
+                                el.value = text;
+                            }
+                            el.dispatchEvent(new Event('input', { bubbles: true }));
+                            el.dispatchEvent(new Event('change', { bubbles: true }));
+                        }
+                    }, params.text);
+                }
+                break;
+            case 'keyPress':
+                await page.keyboard.press(params.key);
                 break;
             case 'navigate':
                 await page.goto(params.url, { waitUntil: 'domcontentloaded', timeout: 10000 }).catch(() => {});
@@ -326,17 +248,11 @@ async function handleInteraction(page, action, params) {
     }
 }
 
-// API Endpoints
 app.post('/api/interact', async (req, res) => {
     const { accountId, windowId, action, params } = req.body;
     const account = getAccount(accountId);
     const windowData = account.browsers.get(windowId);
-    
-    if (!windowData) {
-        return res.json({ success: false, error: 'Window not found' });
-    }
-    
-    addLog('info', `🖱️ ${action}: ${accountId}/${windowId}`, params);
+    if (!windowData) return res.json({ success: false, error: 'Window not found' });
     await handleInteraction(windowData.page, action, params);
     res.json({ success: true });
 });
@@ -369,7 +285,6 @@ app.post('/api/autoscroll', async (req, res) => {
         }
         windowData.autoScroll = false;
     }
-    
     res.json({ success: true, autoScroll: enabled });
 });
 
@@ -382,42 +297,35 @@ app.post('/api/window/create', async (req, res) => {
 app.post('/api/window/close', async (req, res) => {
     const { accountId, windowId } = req.body;
     const account = getAccount(accountId);
-    
     if (account.autoScrolls.has(windowId)) {
         clearInterval(account.autoScrolls.get(windowId));
         account.autoScrolls.delete(windowId);
     }
-    
     const windowData = account.browsers.get(windowId);
     if (windowData) {
-        await closeBrowser(windowData.browser);
+        await windowData.browser.close().catch(() => {});
         account.browsers.delete(windowId);
         account.clients.get(windowId)?.forEach(ws => ws.close());
         account.clients.delete(windowId);
         account.hiddenWindows.delete(windowId);
     }
-    
-    addLog('info', `🗑️ Closed: ${accountId}/${windowId}`);
     res.json({ success: true });
 });
 
 app.post('/api/window/toggle-visibility', (req, res) => {
     const { accountId, windowId } = req.body;
     const account = getAccount(accountId);
-    
     if (account.hiddenWindows.has(windowId)) {
         account.hiddenWindows.delete(windowId);
     } else {
         account.hiddenWindows.add(windowId);
     }
-    
     res.json({ success: true, hidden: account.hiddenWindows.has(windowId) });
 });
 
 app.get('/api/status/:accountId', (req, res) => {
     const { accountId } = req.params;
     const account = getAccount(accountId);
-    
     const windows = [];
     for (const [id, data] of account.browsers) {
         windows.push({
@@ -428,68 +336,46 @@ app.get('/api/status/:accountId', (req, res) => {
             hidden: account.hiddenWindows.has(id)
         });
     }
-    
-    res.json({ 
-        accountId, 
-        windows,
-        hiddenCount: account.hiddenWindows.size,
-        totalWindows: account.browsers.size
-    });
+    res.json({ accountId, windows, hiddenCount: account.hiddenWindows.size });
 });
 
-app.get('/api/logs', (req, res) => {
-    res.json(logBuffer);
-});
-
+app.get('/api/logs', (req, res) => res.json(logBuffer));
 app.post('/api/logs/clear', (req, res) => {
     logBuffer.length = 0;
-    addLog('info', '🗑️ Logs cleared');
     res.json({ success: true });
 });
 
 app.post('/api/init-account', async (req, res) => {
     const { accountId } = req.body;
     const account = getAccount(accountId);
-    
     if (account.browsers.size === 0) {
         const defaults = [
             { id: 'main1', url: 'https://example.com' },
             { id: 'main2', url: 'https://google.com' },
             { id: 'main3', url: 'https://github.com' }
         ];
-        
         for (const win of defaults) {
             await createWindow(accountId, win.id, win.url);
             await new Promise(r => setTimeout(r, 2000));
         }
     }
-    
     const windows = [];
     for (const [id, data] of account.browsers) {
         windows.push({
-            windowId: id,
-            url: data.url,
-            autoScroll: data.autoScroll,
-            title: data.customTitle || id,
-            hidden: account.hiddenWindows.has(id)
+            windowId: id, url: data.url, autoScroll: data.autoScroll,
+            title: data.customTitle || id, hidden: account.hiddenWindows.has(id)
         });
     }
-    
     res.json({ success: true, accountId, windows });
 });
 
 const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => {
-    addLog('success', `🚀 Server running on port ${PORT}`);
-});
+server.listen(PORT, () => addLog('success', `Server running on port ${PORT}`));
 
 process.on('SIGTERM', async () => {
-    addLog('warn', '🧹 Shutting down...');
     for (const [accountId, account] of accounts) {
         for (const [id, interval] of account.autoScrolls) clearInterval(interval);
-        for (const [id, data] of account.browsers) {
-            await closeBrowser(data.browser);
-        }
+        for (const [id, data] of account.browsers) await data.browser.close().catch(() => {});
     }
     server.close();
     process.exit(0);
