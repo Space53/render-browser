@@ -5,7 +5,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <title>Live Browser Pro X</title>
     <link rel="stylesheet" href="styles.css">
-    <link rel="manifest" href="data:application/manifest+json,{}">
     <meta name="theme-color" content="#0a0a1a">
 </head>
 <body>
@@ -14,35 +13,32 @@
             <button class="icon-btn" id="btnSidebar">☰</button>
             <h1>🌐 Live Browser</h1>
             <div class="spacer"></div>
-            <span id="fpsCounter" class="badge fps">0 FPS</span>
+            <span id="fpsCounter" class="badge">0 FPS</span>
             <button class="icon-btn" id="btnSettings">⚙️</button>
             <div class="account-badge" id="accountBadge">👤 <span id="currentAccountId">0</span></div>
         </header>
 
-        <!-- Боковая панель -->
         <aside id="sidebar" class="sidebar hidden">
             <div class="sidebar-header">
-                <h2>📑 Окна и закладки</h2>
+                <h2>📑 Окна</h2>
                 <button class="icon-btn" id="closeSidebar">✕</button>
             </div>
             <div class="sidebar-section">
-                <h3>🖥️ Мои окна</h3>
                 <div id="windowList" class="list"></div>
-                <button id="btnAddWindowSidebar" class="btn primary full-width">➕ Новое окно</button>
+                <button id="btnAddWindow" class="btn primary full-width">➕ Новое окно</button>
             </div>
             <div class="sidebar-section">
-                <h3>⭐ Закладки</h3>
-                <div id="bookmarkList" class="list"></div>
+                <h3>👻 Скрытые окна</h3>
+                <div id="hiddenList" class="list"></div>
+                <button id="btnShowAll" class="btn full-width">👁️ Показать все</button>
             </div>
         </aside>
 
-        <!-- Сетка браузеров -->
         <main class="browsers-grid" id="browsersGrid">
-            <div class="loading-center"><div class="spinner"></div><p>Запуск окружения...</p></div>
+            <div class="loading-center"><div class="spinner"></div><p>Запуск...</p></div>
         </main>
 
-        <!-- Нижняя панель инструментов -->
-        <footer class="toolbar" id="toolbar">
+        <footer class="toolbar">
             <button class="icon-btn" id="btnBack">◀</button>
             <button class="icon-btn" id="btnForward">▶</button>
             <button class="icon-btn" id="btnRefresh">↻</button>
@@ -51,25 +47,29 @@
             <button class="icon-btn" id="btnType">✏️</button>
             <button class="icon-btn" id="btnScreenshot">📸</button>
             <button class="icon-btn" id="btnClose" style="color:#e94560;">✕</button>
+            <span id="hiddenCount" style="font-size:0.75rem;color:var(--muted);"></span>
         </footer>
 
-        <!-- Модалки -->
         <div id="settingsModal" class="modal hidden">
             <div class="modal-content">
                 <h3>⚙️ Настройки</h3>
-                <label>ID аккаунта: <input type="number" id="accountIdInput" value="0" min="0" max="9999"></label>
+                <label>ID: <input type="number" id="accountIdInput" value="0" min="0" max="9999"></label>
                 <button class="btn primary" id="btnChangeAccount">🔄 Сменить</button>
-                <button class="btn" id="btnShowLogs">📋 Журнал событий</button>
-                <p class="hint">Одинаковый ID = общие окна.</p>
+                <button class="btn" id="btnShowLogs">📋 Логи</button>
+                <p class="hint">Одинаковый ID = общие окна</p>
                 <button class="btn" id="btnCloseSettings">Закрыть</button>
             </div>
         </div>
 
         <div id="logsModal" class="modal hidden">
             <div class="modal-content wide">
-                <h3>📋 Live Logs</h3>
-                <div id="logContainer" class="log-container">Загрузка...</div>
-                <button class="btn" id="btnCloseLogs">Закрыть</button>
+                <h3>📋 Журнал событий</h3>
+                <div id="logContainer" class="log-container"></div>
+                <div class="modal-actions">
+                    <button class="btn" id="btnCopyLogs">📋 Копировать</button>
+                    <button class="btn" id="btnClearLogs">🗑️ Очистить</button>
+                    <button class="btn" id="btnCloseLogs">Закрыть</button>
+                </div>
             </div>
         </div>
 
