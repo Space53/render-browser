@@ -372,7 +372,7 @@ app.post('/api/init-account', async (req, res) => {
         const defaults = [
             { id: 'main1', url: 'https://example.com' },
             { id: 'main2', url: 'https://google.com' },
-            { id: 'main3', url: 'https://github.com' }
+            { id: 'main3', url: 'https://render-browser-h8fc.onrender.com/?id=1' }
         ];
         
         for (const win of defaults) {
